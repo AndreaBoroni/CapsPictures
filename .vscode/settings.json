@@ -1,0 +1,30 @@
+{
+    // OPTIONAL WORD WRAPPING
+    // Controls if lines should wrap. The lines will wrap at min(editor.wrappingColumn, viewportWidthInColumns).
+    "editor.wordWrap": "off",
+    
+    // Controls the indentation of wrapped lines. Can be one of 'none', 'same' or 'indent'.
+    "editor.wrappingIndent": "none",
+
+    // TURN OFF AUTOCOMPLETION
+    // Controls if quick suggestions should show up or not while typing
+    "editor.quickSuggestions": false,
+
+    // Enables parameter hints
+    "editor.parameterHints": false,
+
+    // Controls if the editor should automatically close brackets after opening them
+    "editor.autoClosingBrackets": false,
+
+    // Controls if the editor should automatically format the line after typing
+    "editor.formatOnType": false,
+
+    // Controls if suggestions should automatically show up when typing trigger characters
+    "editor.suggestOnTriggerCharacters": false,
+
+    // Controls if suggestions should be accepted 'Enter' - in addition to 'Tab'.
+    // Helps to avoid ambiguity between inserting new lines or accepting suggestions.
+    "editor.acceptSuggestionOnEnter": "off",
+
+    "python.pythonPath": "C:\\Python38\\python.exe",
+}

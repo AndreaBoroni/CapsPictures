@@ -56,16 +56,18 @@ def main():
     caps_images = []
     caps_pngs = []
 
+    # Change the parameters HERE
     caps_diameter = 20
     n_of_caps_per_row = 46
 
     for i in range(121):
-        caps_pngs.append(pygame.image.load('C:/Users/andre/OneDrive/Desktop/Learnings/CapsPictures/Caps/Cap ' + str(i + 1) + '.png'))
+        caps_pngs.append(pygame.image.load('Caps/Cap ' + str(i + 1) + '.png'))
         caps_pngs[i] = pygame.transform.scale(caps_pngs[i], (caps_diameter, caps_diameter))
         caps_images.append(pygame.surfarray.array3d(caps_pngs[i]))
         caps_images[i].swapaxes(0,1)    
 
-    main_image = pygame.image.load('C:/Users/andre/OneDrive/Desktop/Learnings/CapsPictures/Thom.jpg')
+    # Change the picture name HERE
+    main_image = pygame.image.load('Thom.jpg')
 
     width = n_of_caps_per_row * caps_diameter
     height = int(main_image.get_height() / main_image.get_width() * width)
@@ -95,6 +97,7 @@ def main():
     pygame.display.update()
 
     new_im = Image.fromarray(pygame.surfarray.array3d(window), 'RGB')
+    # Change the final picture name HERE
     new_im.save("Image_caps.png")
 
     while True:

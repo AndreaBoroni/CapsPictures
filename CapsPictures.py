@@ -23,7 +23,7 @@ def get_centers(img_width = 0, img_height = 0, radius = 0):
 
     return centers
 
-def get_diff(cap = None, image = None, center_x = 0, center_y = 0, radius = 0):
+def get_grey_value(image = None, center_x = 0, center_y = 0, radius = 0):
 
     start_x = int(center_x - radius)
     start_y = int(center_y - radius)
@@ -38,7 +38,7 @@ def get_images_indexes(image_data = None, caps_data = [], centers = [], radius =
     indexes = []
 
     for c in centers:
-        gray_value = get_diff(cap = None, image = image_data, center_x = c[0], center_y = c[1], radius = radius)
+        gray_value = get_grey_value(image = image_data, center_x = c[0], center_y = c[1], radius = radius)
         indexes.append(int(gray_value / 255 * 121))
     
     min_ind = np.min(indexes)

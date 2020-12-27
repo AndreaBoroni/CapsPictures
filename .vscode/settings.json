@@ -1,4 +1,45 @@
 {
+    "files.associations": {
+        "string": "cpp",
+        "xstring": "cpp",
+        "cmath": "cpp",
+        "cstddef": "cpp",
+        "cstdint": "cpp",
+        "cstdio": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp",
+        "cwchar": "cpp",
+        "exception": "cpp",
+        "initializer_list": "cpp",
+        "ios": "cpp",
+        "iosfwd": "cpp",
+        "iostream": "cpp",
+        "istream": "cpp",
+        "limits": "cpp",
+        "memory": "cpp",
+        "new": "cpp",
+        "ostream": "cpp",
+        "stdexcept": "cpp",
+        "streambuf": "cpp",
+        "system_error": "cpp",
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "typeinfo": "cpp",
+        "utility": "cpp",
+        "vector": "cpp",
+        "xfacet": "cpp",
+        "xiosbase": "cpp",
+        "xlocale": "cpp",
+        "xlocinfo": "cpp",
+        "xlocnum": "cpp",
+        "xmemory": "cpp",
+        "xmemory0": "cpp",
+        "xstddef": "cpp",
+        "xtr1common": "cpp",
+        "xutility": "cpp",
+        "fstream": "cpp"
+    },
+
     // OPTIONAL WORD WRAPPING
     // Controls if lines should wrap. The lines will wrap at min(editor.wrappingColumn, viewportWidthInColumns).
     "editor.wordWrap": "off",
@@ -22,9 +63,118 @@
     // Controls if suggestions should automatically show up when typing trigger characters
     "editor.suggestOnTriggerCharacters": false,
 
+    "breadcrumbs.enabled": false,
+    // "editor.glyphMargin": false,
+    "editor.folding": false,
+
     // Controls if suggestions should be accepted 'Enter' - in addition to 'Tab'.
     // Helps to avoid ambiguity between inserting new lines or accepting suggestions.
     "editor.acceptSuggestionOnEnter": "off",
-
-    "python.pythonPath": "C:\\Python38\\python.exe",
+    "editor.lineNumbers": "off",
+    "workbench.colorCustomizations": {
+        "editor.background": "#042327"
+    },
+    "editor.tokenColorCustomizations": {
+        "comments": "#31B72C",
+        "keywords": "#FFFFFF",
+        "textMateRules": [
+            {
+                "name": "Keywords",
+                "scope": [
+                    "keyword.other.using",
+                    "keyword.control"
+                ],
+                "settings": {
+                    "foreground": "#FFFFFF"
+                }
+            },
+            {
+                "name": "Punctiation",
+                "scope": [
+                    "punctuation",
+                    "storage.modifier.pointer.cpp"
+                ],
+                "settings": {
+                    "foreground": "#d6dddf"
+                }
+            },
+            {
+                "name": "String",
+                "scope": [
+                    "string",
+                    "punctuation.definition.string.end.cpp",
+                    "punctuation.definition.string.begin.cpp"
+                ],
+                "settings": {
+                    "foreground": "#2ca198"
+                }
+            },
+            {
+                "name": "Placeholder",
+                "scope": [
+                    "constant.other.placeholder"
+                ],
+                "settings": {
+                    "foreground": "#2cc198"
+                }
+            },
+            {
+                "name": "Escape_Char",
+                "scope": [
+                    "constant.character.escape",
+                ],
+                "settings": {
+                    "foreground": "#2cf198"
+                }
+            },
+            {
+                "name": "Standard",
+                "scope": [
+                    "variable",
+                    "function",
+                    "entity.name.function",
+                    "keyword.control.directive.include.cpp",
+                    "keyword.control.directive.conditional.ifndef.cpp",
+                    "keyword.control.directive.define.cpp",
+                    "keyword.control.directive.endif.cpp",
+                    "entity.name.function.preprocessor",
+                    "variable.parameter.preprocessor.cpp",
+                    "meta.parens.cpp",
+                    "meta.block.cpp",
+                ],
+                "settings": {
+                    "foreground": "#b0bfc6"
+                }
+            },
+            {
+                "name": "Constants",
+                "scope": [
+                    "constant.numeric",
+                    "constant.language",
+                    "variable.other.enummember",
+                ],
+                "settings": {
+                    "foreground": "#70c5bf"
+                }
+            },
+            // {
+            //     "name": "Primitive_Types",
+            //     "scope": [
+            //     ],
+            //     "settings": {
+            //         "foreground": "#569CD6"
+            //     }
+            // },
+            {
+                "name": "User_Types",
+                "scope": [
+                    "storage.type.built-in.primitive.cpp",
+                    "entity.name.type"
+                ],
+                "settings": {
+                    "foreground": "#9DE3C0"
+                }
+            },
+        ]
+    }
 }

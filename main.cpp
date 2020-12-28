@@ -3,13 +3,11 @@
 using namespace std;
 
 /* Todo list:
-    - Test: compute_from_x_caps and compute_from_y_caps
     - Save with the correct number
     - Blit background of the results with black
     - Save image in different file formats (.png, .bmp, .jpg)
-
+    - Clean up buttons generation
 UI:
-    - Make buttons for x_caps and y_caps
     - Render text
     - Better rendering in the window
     - Zoom in and out in the window
@@ -405,7 +403,10 @@ float compute_gray_value(bitmap image, int center_x, int center_y, int radius) {
         Row += Pitch;
     }
 
-    return (float) sum / (float) count;
+    assert(sum >= 0);
+    
+    if (count == 0) return 0.0;
+    else            return (float) sum / (float) count;
 }
 
 int clamp(int value, int min_value, int max_value) {
@@ -418,12 +419,16 @@ int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radiu
 
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
 
-    int min_index = Total_Caps;
+    int min_index = Total_Caps - 1;
     int max_index = 0;
 
     for (int i = 0; i < number_of_centers; i++) {
         auto gray_value = compute_gray_value(image, centers[i].x, centers[i].y, radius);
-        indexes[i] = (gray_value / 255.0) * Total_Caps;
+        indexes[i] = (gray_value / 255.0) * (Total_Caps - 1);
+        
+        assert(gray_value >= 0);
+        assert(indexes[i] >= 0);
+        assert(indexes[i] < Total_Caps);
 
         if (indexes[i] > max_index) max_index = indexes[i];
         if (indexes[i] < min_index) min_index = indexes[i];
@@ -445,59 +450,21 @@ struct conversion_parameters {
 };
 
 void compute_dimensions_from_radius(bitmap image, conversion_parameters *param) {
-
-    param->x_caps = 0;
-    param->y_caps = 0;
-
-    int bmp_w = image.Width;
-    int bmp_h = image.Height;
-
-    int delta_horizontal = 2 * param->radius;
-    int current_x = param->radius;
-    while (current_x + param->radius < bmp_w) {
-        current_x += delta_horizontal;
-        param->x_caps++;
-    }
-
-    int delta_vertical = (SQRT_2 * param->radius) + 0.5;
-    int current_y = param->radius;
-    while (current_y + param->radius < bmp_h) {
-        current_y += delta_vertical;
-        param->y_caps++;
-    }
+    param->x_caps = (float) image.Width  / (float) (2      * param->radius) + 1;
+    param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
 }
 
 
-void compute_dimensions_from_x_caps(bitmap image, conversion_parameters *param) {
-    param->radius = image.Width / (param->x_caps * 2);
-    compute_dimensions_from_radius(image, param);
+void compute_dimensions_from_x_caps(bitmap image, conversion_parameters *param) {   
+    param->radius = (float) image.Width / (float) (param->x_caps * 2);
+    if (param->radius <= 0) param->radius = 1;
+    param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
 }
 
-void compute_dimensions_from_y_radius(bitmap image, conversion_parameters *param) {
-    param->radius = image.Height / (param->y_caps * SQRT_2);
-    compute_dimensions_from_radius(image, param);
-}
-
-void compute_caps_dimensions(bitmap image, int radius, int *horizontal_caps, int *vertical_caps) {
-    int bmp_w = image.Width;
-    int bmp_h = image.Height;
-
-    *horizontal_caps = 0;
-    *vertical_caps   = 0;
-
-    int delta_horizontal = 2 * radius;
-    int current_x = radius;
-    while (current_x + radius < bmp_w) {
-        current_x += delta_horizontal;
-        (*horizontal_caps) = *horizontal_caps + 1;
-    }
-
-    int delta_vertical = (SQRT_2 * radius) + 0.5;
-    int current_y = radius;
-    while (current_y + radius < bmp_h) {
-        current_y += delta_vertical;
-        (*vertical_caps) = *vertical_caps + 1;
-    }
+void compute_dimensions_from_y_caps(bitmap image, conversion_parameters *param) {
+    param->radius = (float) image.Width / (float) (param->y_caps * SQRT_2);
+    if (param->radius <= 0) param->radius = 1;
+    param->x_caps = (float) image.Height / (float) (2 * param->radius) + 1;
 }
 
 void adjust_bpp(bitmap *image, int Bpp) {
@@ -552,8 +519,8 @@ bitmap create_image(bitmap image, conversion_parameters param) {
     }
     
     bitmap result_bitmap;
-    result_bitmap.Width  = blit_radius * (2 * param.x_caps + 1);
-    result_bitmap.Height = blit_radius * (SQRT_2 * param.y_caps);
+    result_bitmap.Width  = image.Width  * param.scale;
+    result_bitmap.Height = image.Height * param.scale;
     result_bitmap.Memory = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
     // TODO: look into having a black background for saving the images better
@@ -653,11 +620,20 @@ enum button_codes {
     COMPUTE_BTN,
     RADIUS_PLUS_BTN,
     RADIUS_MINUS_BTN,
+    XCAPS_PLUS_BTN,
+    XCAPS_MINUS_BTN,
+    YCAPS_PLUS_BTN,
+    YCAPS_MINUS_BTN,
+    SCALE_PLUS_BTN,
+    SCALE_MINUS_BTN,
 };
 
 int main(void) {
     initialize_main_buffer();
     start_main_window();
+
+    memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
+    blit_main_buffer_to_window();
     
     int max_cap_width  = 0;
     int max_cap_height = 0;
@@ -689,8 +665,8 @@ int main(void) {
     }
 
     conversion_parameters param;
-    param.radius = 4;
-    param.scale  = 3;
+    param.radius = 20;
+    param.scale  = 1;
     compute_dimensions_from_radius(image, &param);
 
     bitmap result_bitmap = create_image(image, param);
@@ -701,6 +677,9 @@ int main(void) {
     button source_image_btn, result_image_btn;
     button save_btn;
     button radius_plus_btn, radius_minus_btn;
+    button xcaps_plus_btn, xcaps_minus_btn;
+    button ycaps_plus_btn, ycaps_minus_btn;
+    button scale_plus_btn, scale_minus_btn;
 
     source_image_btn.rect = {50, 50, 450, 750};
     source_image_btn.side = 5;
@@ -712,26 +691,62 @@ int main(void) {
     result_image_btn.c    = {140, 140, 140, 255};
     result_image_btn.code = RESULT_BTN;
     
-    save_btn.rect = {500, 300, 650, 350};
+    radius_plus_btn.rect = {600, 50, 650, 100};
+    radius_plus_btn.side = 100;
+    radius_plus_btn.c    = {255, 255, 255, 255};
+    radius_plus_btn.code = RADIUS_PLUS_BTN;
+    
+    radius_minus_btn.rect = {500, 50, 550, 100};
+    radius_minus_btn.side = 100;
+    radius_minus_btn.c    = {100, 100, 100, 255};
+    radius_minus_btn.code = RADIUS_MINUS_BTN;
+
+    xcaps_plus_btn.rect = {600, 150, 650, 200};
+    xcaps_plus_btn.side = 100;
+    xcaps_plus_btn.c    = {255, 255, 255, 255};
+    xcaps_plus_btn.code = XCAPS_PLUS_BTN;
+    
+    xcaps_minus_btn.rect = {500, 150, 550, 200};
+    xcaps_minus_btn.side = 100;
+    xcaps_minus_btn.c    = {100, 100, 100, 255};
+    xcaps_minus_btn.code = XCAPS_MINUS_BTN;
+
+    ycaps_plus_btn.rect = {600, 250, 650, 300};
+    ycaps_plus_btn.side = 100;
+    ycaps_plus_btn.c    = {255, 255, 255, 255};
+    ycaps_plus_btn.code = YCAPS_PLUS_BTN;
+    
+    ycaps_minus_btn.rect = {500, 250, 550, 300};
+    ycaps_minus_btn.side = 100;
+    ycaps_minus_btn.c    = {100, 100, 100, 255};
+    ycaps_minus_btn.code = YCAPS_MINUS_BTN;
+    
+    scale_plus_btn.rect = {600, 350, 650, 400};
+    scale_plus_btn.side = 100;
+    scale_plus_btn.c    = {255, 255, 255, 255};
+    scale_plus_btn.code = SCALE_PLUS_BTN;
+    
+    scale_minus_btn.rect = {500, 350, 550, 400};
+    scale_minus_btn.side = 100;
+    scale_minus_btn.c    = {100, 100, 100, 255};
+    scale_minus_btn.code = SCALE_MINUS_BTN;
+
+    save_btn.rect = {500, 450, 650, 500};
     save_btn.side = 100;
     save_btn.c    = {50, 180, 50, 255};
     save_btn.code = SAVE_BTN;
-    
-    radius_plus_btn.rect = {600, 200, 650, 250};
-    radius_plus_btn.side = 100;
-    radius_plus_btn.c    = {100, 100, 100, 255};
-    radius_plus_btn.code = RADIUS_PLUS_BTN;
-    
-    radius_minus_btn.rect = {500, 200, 550, 250};
-    radius_minus_btn.side = 100;
-    radius_minus_btn.c    = {255, 255, 255, 255};
-    radius_minus_btn.code = RADIUS_MINUS_BTN;
 
     all_buttons[btn_length++] = &source_image_btn;
     all_buttons[btn_length++] = &result_image_btn;
     all_buttons[btn_length++] = &save_btn;
     all_buttons[btn_length++] = &radius_plus_btn;
     all_buttons[btn_length++] = &radius_minus_btn;
+    all_buttons[btn_length++] = &xcaps_plus_btn;
+    all_buttons[btn_length++] = &xcaps_minus_btn;
+    all_buttons[btn_length++] = &ycaps_plus_btn;
+    all_buttons[btn_length++] = &ycaps_minus_btn;
+    all_buttons[btn_length++] = &scale_plus_btn;
+    all_buttons[btn_length++] = &scale_minus_btn;
     
     while (true) {
         // Handle Messages
@@ -797,18 +812,50 @@ int main(void) {
             } break;
             case RESULT_BTN: {
                 free(result_bitmap.Memory);
-                param.scale = 4;
                 result_bitmap = create_image(image, param);
                 saved_changes = false;
             } break;
             case RADIUS_PLUS_BTN: {
                 param.radius++;
                 compute_dimensions_from_radius(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case RADIUS_MINUS_BTN: {
                 param.radius--;
                 if (param.radius == 0) param.radius = 1;
                 compute_dimensions_from_radius(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case XCAPS_PLUS_BTN: {
+                param.x_caps++;
+                compute_dimensions_from_x_caps(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case XCAPS_MINUS_BTN: {
+                param.x_caps--;
+                if (param.x_caps == 0) param.x_caps = 1;
+                compute_dimensions_from_x_caps(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case YCAPS_PLUS_BTN: {
+                param.y_caps++;
+                compute_dimensions_from_y_caps(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case YCAPS_MINUS_BTN: {
+                param.y_caps--;
+                if (param.y_caps == 0) param.y_caps = 1;
+                compute_dimensions_from_y_caps(image, &param);
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case SCALE_PLUS_BTN: {
+                param.scale += 0.1;
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
+            } break;
+            case SCALE_MINUS_BTN: {
+                param.scale -= 0.1;
+                if (param.scale <= 0.1) param.scale = 0.1;
+                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
         }
         handled_press = true;

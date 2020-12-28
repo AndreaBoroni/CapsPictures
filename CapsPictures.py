@@ -67,7 +67,7 @@ def main():
         caps_images[i].swapaxes(0,1)    
 
     # Change the picture name HERE
-    main_image = pygame.image.load('Thom.jpg')
+    main_image = pygame.image.load('Thomas Brodie Sangster.jpg')
 
     width = n_of_caps_per_row * caps_diameter
     height = int(main_image.get_height() / main_image.get_width() * width)

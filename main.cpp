@@ -3,17 +3,14 @@
 using namespace std;
 
 /* Todo list:
-    - handle 1 and 3 channels image inputs
-    - investigate loading all caps
     - save image
     
     - make everyting settable
     - make UI
 */
 
-
-
-
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -44,16 +41,16 @@ BITMAPINFO Main_Info = {0};
 
 HWND Window = {0};
 
-uint32 key_presses[100]    = {0};
-uint32 key_releases[100]   = {0};
-int8   key_presses_length  = 0;
-int8   key_releases_length = 0;
-bool   left_button_down    = false;
-bool   right_button_down   = false;
+uint32 key_presses[100]  = {0};
+uint32 key_releases[100] = {0};
+int8 key_presses_length  = 0;
+int8 key_releases_length = 0;
+bool left_button_down    = false;
+bool right_button_down   = false;
 
 bool changed_size = false;
 
-#define Total_Caps 99 // Don't know why only 99 load
+#define Total_Caps 121 // Don't know why only 99 load
 bitmap caps_data[Total_Caps];
 
 void initialize_main_buffer()
@@ -155,7 +152,7 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
 }
 
 
-#define INITIAL_WIDTH  800
+#define INITIAL_WIDTH  1200
 #define INITIAL_HEIGHT 800
 
 void start_main_window()
@@ -246,7 +243,10 @@ void render_rectangle(RECT rectangle, Color color, uint8 thickness)
     render_filled_rectangle(right_rect, color);
 }
 
-void render_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width, int height) {
+void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width, int height) {
+
+    if (width  < 0) width  = Source->Width;
+    if (height < 0) height = Source->Height;
 
     int starting_x = max(x, 0);
     int starting_y = max(y, 0);
@@ -275,15 +275,64 @@ void render_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width, int he
             x_bitmap = (X - x) * width_scale;
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * Source->Width];
 
-            // uint8 A = ((source_pixel & 0xff000000) >> 24);
-            // uint8 R = ((source_pixel & 0x00ff0000) >> 16);
-            // uint8 G = ((source_pixel & 0x0000ff00) >>  8);
-            // uint8 B = ((source_pixel & 0x000000ff) >>  0);
+            float SA = ((source_pixel & 0xff000000) >> 24) / 255.0;
+            uint8 SB = ((source_pixel & 0x00ff0000) >> 16);
+            uint8 SG = ((source_pixel & 0x0000ff00) >>  8);
+            uint8 SR = ((source_pixel & 0x000000ff) >>  0);
+
+            float DA = ((*Pixel & 0xff000000) >> 24) / 255.0;
+            uint8 DB = ((*Pixel & 0x00ff0000) >> 16);
+            uint8 DG = ((*Pixel & 0x0000ff00) >>  8);
+            uint8 DR = ((*Pixel & 0x000000ff) >>  0);
+
+            uint8 A = 255 * (SA + DA - SA*DA);
+            uint8 R = DR * (1 - SA) + SR;
+            uint8 G = DG * (1 - SA) + SG;
+            uint8 B = DB * (1 - SA) + SB;
+
+            *Pixel = (A << 24) | (B << 16) | (G << 8) | R;
+            Pixel++;
+        }
+        Row += Dest_Pitch;
+    }
+}
+
+void render_bitmap_to_screen(bitmap *Source, int x, int y, int width, int height) {
+
+    if (width  < 0) width  = Source->Width;
+    if (height < 0) height = Source->Height;
+
+    int starting_x = max(x, 0);
+    int starting_y = max(y, 0);
+    int ending_x   = min(x + width,  Main_Buffer.Width);
+    int ending_y   = min(y + height, Main_Buffer.Height);
+    
+    if (starting_x > Main_Buffer.Width)  return;
+    if (starting_y > Main_Buffer.Height) return;
+    if (ending_x < 0) return;
+    if (ending_y < 0) return;
+
+    int x_bitmap, y_bitmap;
+
+    int Dest_Pitch = Main_Buffer.Width * Bytes_Per_Pixel;
+    uint8 *Row     = (uint8 *)  Main_Buffer.Memory;
+    uint32 *Texels = (uint32 *) Source->Memory;
+    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
+
+    float width_scale  = (float) Source->Width  / (float) width;
+    float height_scale = (float) Source->Height / (float) height;
+
+    for (int Y = starting_y; Y < ending_y; Y++) {        
+        uint32 *Pixel = (uint32 *)Row;
+        y_bitmap = (Y - y) * height_scale;
+        for (int X = starting_x; X < ending_x; X++) {
+            x_bitmap = (X - x) * width_scale;
+            uint32 source_pixel = Texels[x_bitmap + y_bitmap * Source->Width];
 
             float SA = ((source_pixel & 0xff000000) >> 24) / 255.0;
-            uint8 SR = ((source_pixel & 0x00ff0000) >> 16);
+            uint8 SB = ((source_pixel & 0x00ff0000) >> 16);
             uint8 SG = ((source_pixel & 0x0000ff00) >>  8);
-            uint8 SB = ((source_pixel & 0x000000ff) >>  0);
+            uint8 SR = ((source_pixel & 0x000000ff) >>  0);
 
             float DA = ((*Pixel & 0xff000000) >> 24) / 255.0;
             uint8 DR = ((*Pixel & 0x00ff0000) >> 16);
@@ -296,7 +345,6 @@ void render_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width, int he
             uint8 B = DB * (1 - SA) + SB;
 
             *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
-            // printf("%d %d %d %d\n", A, R, G, B);
             Pixel++;
         }
         Row += Dest_Pitch;
@@ -417,20 +465,136 @@ void compute_caps_dimensions(bitmap image, int radius, int *horizontal_caps, int
     }
 }
 
+void adjust_bpp(bitmap *image, int Bpp) {
+    if (Bpp == 4) return;
+    
+    if (Bpp == 3) {
+        uint32 *new_Memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
+        uint8  *Bytes      = (uint8 *)  image->Memory;
+        for (int p = 0; p < image->Width * image->Height; p++) {
+            new_Memory[p] = (255 << 24) | (Bytes[p*3] << 16) | (Bytes[p*3 + 1] << 8) | (Bytes[p*3 + 2] << 0);
+        }
+        free(image->Memory);
+        image->Memory = (uint8 *) new_Memory;
+        return;
+    }
+    if (Bpp == 1) {
+        uint32 *new_Memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
+        uint8  *Pixels     = (uint8 *)  image->Memory;
+        for (int p = 0; p < image->Width * image->Height; p++) {
+            new_Memory[p] = (255 << 24) | (Pixels[p] << 16) | (Pixels[p] << 8) | (Pixels[p] << 0);
+        }
+        free(image->Memory);
+        image->Memory = (uint8 *) new_Memory;
+        return;
+    }
+    assert(false);
+}
+
 void premultiply_alpha(bitmap *image) {
     uint32 *Pixels = (uint32 *) image->Memory;
     for (int p = 0; p < image->Width * image->Height; p++) {
         uint8 A = ((Pixels[p] & 0xff000000) >> 24);
         float A_scaled = (float) A / 255.0;
-        uint8 R = ((Pixels[p] & 0x00ff0000) >> 16) * A_scaled;
+        uint8 B = ((Pixels[p] & 0x00ff0000) >> 16) * A_scaled;
         uint8 G = ((Pixels[p] & 0x0000ff00) >>  8) * A_scaled;
-        uint8 B = ((Pixels[p] & 0x000000ff) >>  0) * A_scaled;
+        uint8 R = ((Pixels[p] & 0x000000ff) >>  0) * A_scaled;
         
-        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
+        Pixels[p] = (A << 24) | (B << 16) | (G << 8) | (R << 0);
     }
 }
 
-// #define DEBUG
+struct conversion_parameters {
+    int x_caps, y_caps;
+    int radius;
+    float scale;
+};
+
+bitmap create_image(bitmap image, conversion_parameters param) {
+    v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
+    compute_centers(centers, param.x_caps, param.y_caps, param.radius);
+
+    int *indexes = compute_indexes(image, centers, param.x_caps * param.y_caps, param.radius);
+
+    int blit_radius = param.radius * param.scale;
+    for (int i = 0; i < param.x_caps * param.y_caps; i++) {
+        centers[i].x *= param.scale;
+        centers[i].y *= param.scale;
+    }
+    
+    bitmap result_bitmap;
+    result_bitmap.Width  = blit_radius * (2 * param.x_caps + 1);
+    result_bitmap.Height = blit_radius * (SQRT_2 * param.y_caps);
+    result_bitmap.Memory = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+
+    // TODO: look into having a black background
+    // for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) result_bitmap.Memory[i*4] = 255;
+    
+    memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    for (int i = 0; i < param.x_caps * param.y_caps; i++) {
+        blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - blit_radius, centers[i].y - blit_radius, blit_radius * 2, blit_radius * 2);
+    }
+
+    free(centers);
+    return result_bitmap;
+}
+
+struct button {
+    RECT rect;
+    int side;
+    
+    Color c;
+    string text;
+
+    bool visible;
+    int code;
+
+    bitmap bmp;
+};
+
+RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width, int source_height) {
+    RECT result;
+
+    result.left = dest_rect.left + dest_side;
+    result.top  = dest_rect.top  + dest_side;
+    int rect_width  = dest_rect.right  - dest_rect.left - dest_side * 2;
+    int rect_height = dest_rect.bottom - dest_rect.top  - dest_side * 2;
+
+    bool width_or_height = (float) rect_width / (float) source_width > (float) rect_height / (float) source_height;
+    int rendered_width  = width_or_height ? rect_height * source_width / source_height : rect_width;
+    int rendered_height = width_or_height ? rect_height : rect_width * source_height / source_width;
+
+    result.right  = result.left + rendered_width;
+    result.bottom = result.top  + rendered_height;
+
+    return result;
+}
+
+int button_pressed(button *btn[], int btn_length) {
+
+    if (!left_button_down) return -1;
+
+    v2 v;
+    POINT p;
+    GetCursorPos(&p);
+
+    RECT rect;
+    GetClientRect( Window, (LPRECT) &rect);
+    ClientToScreen(Window, (LPPOINT)&rect.left);
+    ClientToScreen(Window, (LPPOINT)&rect.right);
+    v.x = p.x - rect.left;
+    v.y = p.y - rect.top;
+
+    for (int i = 0; i < btn_length; i++) {
+        if (v.x < btn[i]->rect.left)   continue;
+        if (v.x > btn[i]->rect.right)  continue;
+        if (v.y < btn[i]->rect.top)    continue;
+        if (v.y > btn[i]->rect.bottom) continue;
+
+        return btn[i]->code;
+    }
+    return -1;
+}
 
 int main(void) {
     initialize_main_buffer();
@@ -443,9 +607,9 @@ int main(void) {
 
     int Bpp;
     for (int i = 0; i < Total_Caps; i++) {
-        const int8 * filepath = ("Caps/Cap " + to_string(i + 1) + ".png\0").c_str();
-        caps_data[i].Memory = stbi_load(filepath, &caps_data[i].Width, &caps_data[i].Height, &Bpp, 0);
-        if (caps_data[i].Memory == NULL) printf("ERROR\n");
+        string filepath = "Caps/Cap " + to_string(i + 1) + ".png";
+        caps_data[i].Memory = stbi_load(filepath.c_str(), &caps_data[i].Width, &caps_data[i].Height, &Bpp, Bytes_Per_Pixel);
+        if (caps_data[i].Memory == NULL) printf("ERROR loading file: %s\n", filepath.c_str());
         assert(Bpp == Bytes_Per_Pixel);
 
         premultiply_alpha(&caps_data[i]);
@@ -455,47 +619,69 @@ int main(void) {
         if (caps_data[i].Height > max_cap_height) max_cap_height = caps_data[i].Height;
     }
 
+    string filepath = "Thomas Brodie Sangster.jpg";
+
     bitmap image;
-    image.Memory = stbi_load("Caps/Cap 1.png", &image.Width, &image.Height, &Bpp, 0);
-    assert(Bpp == Bytes_Per_Pixel);
+    image.Memory = stbi_load(filepath.c_str(), &image.Width, &image.Height, &Bpp, 0);
+    adjust_bpp(&image, Bpp);
     premultiply_alpha(&image);
 
-    int x_caps = 0;
-    int y_caps = 0;
-    int radius = image.Width / (40 * 2);
-    compute_caps_dimensions(image, radius, &x_caps, &y_caps);
+    conversion_parameters param;
 
-    v2 *centers = (v2 *) malloc(sizeof(v2) * x_caps * y_caps);
-    compute_centers(centers, x_caps, y_caps, radius);
+    param.radius = 4;
+    compute_caps_dimensions(image, param.radius, &param.x_caps, &param.y_caps);
+    param.scale = 1;
 
-    int *indexes = compute_indexes(image, centers, x_caps * y_caps, radius);
+    bitmap result_bitmap = create_image(image, param);
 
-    #if defined(DEBUG)
-    printf("max cap w: %d max cap h: %d\nimage width: %d image height: %d\ncaps per row: %d caps per col: %d radius: %d\n", max_cap_width, max_cap_height, image.Width, image.Height, x_caps, y_caps, radius);
-    for (int i = 0; i < x_caps * y_caps; i++) printf("[%d] x: %d y: %d, index = %d\n", i, centers[i].x, centers[i].y, indexes[i]);
-    #endif
+    button *all_buttons[100];
+    int btn_length = 0;
 
-    bitmap composited_bitmap;
+    button source_image_btn, result_image_btn;
+    button save_btn;
 
-    int scale = 4;
-    radius *= scale;
-    for (int i = 0; i < x_caps * y_caps; i++) {
-        centers[i].x *= scale;
-        centers[i].y *= scale;
-    }
+    source_image_btn.rect = {50, 50, 450, 750};
+    source_image_btn.side = 5;
+    source_image_btn.c    = {140, 140, 140, 255};
+    source_image_btn.code = 1;
+    
+    result_image_btn.rect = {700, 50, 1100, 750};
+    result_image_btn.side = 5;
+    result_image_btn.c    = {140, 140, 140, 255};
+    result_image_btn.code = 2;
+    
+    save_btn.rect = {500, 300, 650, 350};
+    save_btn.side = 100;
+    save_btn.c    = {50, 180, 50, 255};
+    save_btn.code = 3;
 
-
-    memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
-    for (int i = 0; i < x_caps * y_caps; i++) {
-        render_bitmap(&Main_Buffer, &caps_data[indexes[i]], centers[i].x - radius, centers[i].y - radius, radius * 2, radius * 2);
-    }
-
+    all_buttons[btn_length++] = &source_image_btn;
+    all_buttons[btn_length++] = &result_image_btn;
+    all_buttons[btn_length++] = &save_btn;
+    
     while (true) {
         auto result = handle_window_messages();
         if (result == -1) return 0;
 
-        // render_rectangle({50, 50, 450, 700}, {200, 200, 200, 200}, 4);
+        for (int i = 0; i < btn_length; i++) {
+            render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
+        }
+
+        int pressed = button_pressed(all_buttons, btn_length);
+        switch (pressed) {
+            case -1: break;
+            case 3:
+                int success = stbi_write_png("result.png", result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, Bytes_Per_Pixel * result_bitmap.Width);
+                if (success == 0) printf("Failed to write image to file!!\n");
+                break;
+        }
+
+        RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
+        render_bitmap_to_screen(&image, rect_s.left, rect_s.top, rect_s.right - rect_s.left, rect_s.bottom - rect_s.top);
+
+        RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
+        render_bitmap_to_screen(&result_bitmap, rect_r.left, rect_r.top, rect_r.right - rect_r.left, rect_r.bottom - rect_r.top);
+
         blit_main_buffer_to_window();
-        // return 0;
     }
 }

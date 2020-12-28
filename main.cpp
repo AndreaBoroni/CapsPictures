@@ -48,6 +48,7 @@ int8 key_releases_length = 0;
 bool left_button_down    = false;
 bool right_button_down   = false;
 
+bool handled_press = false;
 bool changed_size = false;
 
 #define Total_Caps 121 // Don't know why only 99 load
@@ -139,8 +140,13 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
                 key_presses_length++;
             }
         } break;
-        case WM_LBUTTONDOWN: left_button_down  = true;  break;
-        case WM_LBUTTONUP:   left_button_down  = false; break;
+        case WM_LBUTTONDOWN:
+            left_button_down = true;
+            handled_press = false;
+            break;
+        case WM_LBUTTONUP:
+            left_button_down = false;
+            break;
         case WM_RBUTTONDOWN: right_button_down = true;  break;
         case WM_RBUTTONUP:   right_button_down = false; break;
         default:
@@ -443,6 +449,51 @@ int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radiu
     return indexes;
 }
 
+struct conversion_parameters {
+    int x_caps, y_caps;
+    int radius;
+    float scale;
+};
+
+conversion_parameters compute_dimensions_from_radius(bitmap image, int radius) {
+
+    conversion_parameters param;
+    param.radius = radius;
+    param.x_caps = 0;
+    param.y_caps = 0;
+    param.scale  = 1.0;
+
+    int bmp_w = image.Width;
+    int bmp_h = image.Height;
+
+    int delta_horizontal = 2 * radius;
+    int current_x = radius;
+    while (current_x + radius < bmp_w) {
+        current_x += delta_horizontal;
+        param.x_caps++;
+    }
+
+    int delta_vertical = (SQRT_2 * radius) + 0.5;
+    int current_y = radius;
+    while (current_y + radius < bmp_h) {
+        current_y += delta_vertical;
+        param.y_caps++;
+    }
+
+    return param;
+}
+
+
+conversion_parameters compute_dimensions_from_x_caps(bitmap image, int x_caps) {
+    conversion_parameters param;
+    return param;
+}
+
+conversion_parameters compute_dimensions_from_y_caps(bitmap image, int y_caps) {
+    conversion_parameters param;
+    return param;
+}
+
 void compute_caps_dimensions(bitmap image, int radius, int *horizontal_caps, int *vertical_caps) {
     int bmp_w = image.Width;
     int bmp_h = image.Height;
@@ -504,12 +555,6 @@ void premultiply_alpha(bitmap *image) {
     }
 }
 
-struct conversion_parameters {
-    int x_caps, y_caps;
-    int radius;
-    float scale;
-};
-
 bitmap create_image(bitmap image, conversion_parameters param) {
     v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
     compute_centers(centers, param.x_caps, param.y_caps, param.radius);
@@ -527,7 +572,7 @@ bitmap create_image(bitmap image, conversion_parameters param) {
     result_bitmap.Height = blit_radius * (SQRT_2 * param.y_caps);
     result_bitmap.Memory = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    // TODO: look into having a black background
+    // TODO: look into having a black background for saving the images better
     // for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) result_bitmap.Memory[i*4] = 255;
     
     memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -572,7 +617,7 @@ RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width,
 
 int button_pressed(button *btn[], int btn_length) {
 
-    if (!left_button_down) return -1;
+    if (!left_button_down || handled_press) return -1;
 
     v2 v;
     POINT p;
@@ -595,6 +640,36 @@ int button_pressed(button *btn[], int btn_length) {
     }
     return -1;
 }
+
+bool open_file_externally(char *file_name, int size_file_name) {
+    OPENFILENAME dialog_arguments;
+
+    memset(&dialog_arguments, 0, sizeof(dialog_arguments));
+    dialog_arguments.lStructSize = sizeof(dialog_arguments);
+    dialog_arguments.hwndOwner = Window;
+    dialog_arguments.lpstrFile = file_name;
+    // Set lpstrFile[0] to '\0' so that GetOpenFileName does not 
+    // use the contents of szFile to initialize itself.
+    dialog_arguments.lpstrFile[0] = '\0';
+    dialog_arguments.nMaxFile = size_file_name;
+    dialog_arguments.lpstrFilter = "All\0*.*\0";
+    dialog_arguments.nFilterIndex = 1;
+    dialog_arguments.lpstrFileTitle = NULL;
+    dialog_arguments.nMaxFileTitle = 0;
+    dialog_arguments.lpstrInitialDir = NULL;
+    dialog_arguments.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+    return GetOpenFileName(&dialog_arguments);
+}
+
+enum button_codes {
+    SAVE_BTN,
+    SOURCE_BTN,
+    RESULT_BTN,
+    COMPUTE_BTN,
+    RADIUS_PLUS_BTN,
+    RADIUS_MINUS_BTN,
+};
 
 int main(void) {
     initialize_main_buffer();
@@ -619,18 +694,19 @@ int main(void) {
         if (caps_data[i].Height > max_cap_height) max_cap_height = caps_data[i].Height;
     }
 
-    string filepath = "Thomas Brodie Sangster.jpg";
+    const int file_name_size = 400;
+    char file_name[file_name_size] = "Courtois.jpg";
+    int save_counter = 1; // Todo: start counter at the last already saved image +1
 
     bitmap image;
-    image.Memory = stbi_load(filepath.c_str(), &image.Width, &image.Height, &Bpp, 0);
-    adjust_bpp(&image, Bpp);
-    premultiply_alpha(&image);
+    image.Memory = stbi_load(file_name, &image.Width, &image.Height, &Bpp, 0);
+    if (image.Memory) {
+        adjust_bpp(&image, Bpp);
+        premultiply_alpha(&image);
+    }
 
-    conversion_parameters param;
-
-    param.radius = 4;
-    compute_caps_dimensions(image, param.radius, &param.x_caps, &param.y_caps);
-    param.scale = 1;
+    int displayed_radius = 4;
+    auto param = compute_dimensions_from_radius(image, displayed_radius);
 
     bitmap result_bitmap = create_image(image, param);
 
@@ -639,49 +715,128 @@ int main(void) {
 
     button source_image_btn, result_image_btn;
     button save_btn;
+    button radius_plus_btn, radius_minus_btn;
 
     source_image_btn.rect = {50, 50, 450, 750};
     source_image_btn.side = 5;
     source_image_btn.c    = {140, 140, 140, 255};
-    source_image_btn.code = 1;
+    source_image_btn.code = SOURCE_BTN;
     
     result_image_btn.rect = {700, 50, 1100, 750};
     result_image_btn.side = 5;
     result_image_btn.c    = {140, 140, 140, 255};
-    result_image_btn.code = 2;
+    result_image_btn.code = RESULT_BTN;
     
     save_btn.rect = {500, 300, 650, 350};
     save_btn.side = 100;
     save_btn.c    = {50, 180, 50, 255};
-    save_btn.code = 3;
+    save_btn.code = SAVE_BTN;
+    
+    radius_plus_btn.rect = {600, 200, 650, 250};
+    radius_plus_btn.side = 100;
+    radius_plus_btn.c    = {100, 100, 100, 255};
+    radius_plus_btn.code = RADIUS_PLUS_BTN;
+    
+    radius_minus_btn.rect = {500, 200, 550, 250};
+    radius_minus_btn.side = 100;
+    radius_minus_btn.c    = {255, 255, 255, 255};
+    radius_minus_btn.code = RADIUS_MINUS_BTN;
 
     all_buttons[btn_length++] = &source_image_btn;
     all_buttons[btn_length++] = &result_image_btn;
     all_buttons[btn_length++] = &save_btn;
+    all_buttons[btn_length++] = &radius_plus_btn;
+    all_buttons[btn_length++] = &radius_minus_btn;
     
     while (true) {
         auto result = handle_window_messages();
         if (result == -1) return 0;
 
+        int pressed = button_pressed(all_buttons, btn_length);
+        switch (pressed) {
+            case -1: break;
+            case SAVE_BTN: {
+                int dot_index = -1;
+                for (int i = 0; i < file_name_size; i++) {
+                    if (file_name[i] == '\0') {
+                        while (i >= 0) {
+                            if (file_name[i] == '.') {
+                                dot_index = i;
+                                break;       
+                            }
+                            i--;
+                        }
+                        break;
+                    }
+                }
+                assert(dot_index >= 0);
+
+                char save_file_name[file_name_size + 3];
+
+                strncpy(save_file_name, file_name, dot_index);
+                save_file_name[dot_index] = '\0';
+                strcat(save_file_name, to_string(save_counter).c_str());
+                strcat(save_file_name, file_name + dot_index);
+
+                int success = stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, Bytes_Per_Pixel * result_bitmap.Width);
+                if (success == 0) {
+                    printf("Failed to write image to file!!\n");
+                    break;
+                }
+                save_counter++;
+            } break;
+            case SOURCE_BTN: {
+                char temp_file_name[file_name_size];
+                
+                bool success = open_file_externally(temp_file_name, file_name_size);
+                if (!success) break;
+                
+                free(image.Memory);
+                image.Memory = stbi_load(temp_file_name, &image.Width, &image.Height, &Bpp, 0);
+
+                if (image.Memory) {
+                    adjust_bpp(&image, Bpp);
+                    premultiply_alpha(&image);
+
+                    param = compute_dimensions_from_radius(image, displayed_radius);
+
+                    memcpy(file_name, temp_file_name, file_name_size);
+                    save_counter = 1;
+                } else {
+                    printf("Unable to open file!\n");
+                }
+
+            } break;
+            case RESULT_BTN: {
+                free(result_bitmap.Memory);
+                result_bitmap = create_image(image, param);
+            } break;
+            case RADIUS_PLUS_BTN: {
+                displayed_radius++;
+                param = compute_dimensions_from_radius(image, displayed_radius);
+            } break;
+            case RADIUS_MINUS_BTN: {
+                displayed_radius--;
+                if (displayed_radius == 0) displayed_radius = 1;
+                param = compute_dimensions_from_radius(image, displayed_radius);
+            } break;
+        }
+        handled_press = true;
+
+        memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         for (int i = 0; i < btn_length; i++) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
         }
 
-        int pressed = button_pressed(all_buttons, btn_length);
-        switch (pressed) {
-            case -1: break;
-            case 3:
-                int success = stbi_write_png("result.png", result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, Bytes_Per_Pixel * result_bitmap.Width);
-                if (success == 0) printf("Failed to write image to file!!\n");
-                break;
+        if (image.Memory) {
+            RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
+            render_bitmap_to_screen(&image, rect_s.left, rect_s.top, rect_s.right - rect_s.left, rect_s.bottom - rect_s.top);
         }
 
-        RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
-        render_bitmap_to_screen(&image, rect_s.left, rect_s.top, rect_s.right - rect_s.left, rect_s.bottom - rect_s.top);
-
-        RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
-        render_bitmap_to_screen(&result_bitmap, rect_r.left, rect_r.top, rect_r.right - rect_r.left, rect_r.bottom - rect_r.top);
-
+        if (result_bitmap.Memory) {
+            RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
+            render_bitmap_to_screen(&result_bitmap, rect_r.left, rect_r.top, rect_r.right - rect_r.left, rect_r.bottom - rect_r.top);
+        }
         blit_main_buffer_to_window();
     }
 }

@@ -11,7 +11,8 @@
                 "-o",
                 "${fileBasenameNoExtension}.exe",
                 "stb_image.h",
-                "-lgdi32"
+                "-lgdi32",
+                "-lComdlg32",
             ],
             "problemMatcher": [ "$gcc" ],
             "group": { 

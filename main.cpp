@@ -3,18 +3,22 @@
 using namespace std;
 
 /* Todo list:
-    - save image
-    
-    - make everyting settable
-    - make UI
+    - Test: compute_from_x_caps and compute_from_y_caps
+    - Save with the correct number
+    - Blit background of the results with black
+    - Save image in different file formats (.png, .bmp, .jpg)
+
+UI:
+    - Make buttons for x_caps and y_caps
+    - Render text
+    - Better rendering in the window
+    - Zoom in and out in the window
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
-
-// #define assert(Expression) if(!(Expression)) *(int *) 0 = 0;
 
 typedef unsigned char      uint8;
 typedef unsigned short     uint16;
@@ -84,21 +88,6 @@ void blit_main_buffer_to_window()
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // source
                   Main_Buffer.Memory, Main_Buffer.Info, DIB_RGB_COLORS, SRCCOPY);
 
-}
-
-void reset_window_background() {
-    HDC DeviceContext = GetDC(Window);
-
-    RECT ClientRect;
-    GetClientRect(Window, &ClientRect);
-    int w_width  = ClientRect.right  - ClientRect.left;
-    int w_height = ClientRect.bottom - ClientRect.top;
-
-
-    StretchDIBits(DeviceContext,
-                  0, 0, w_width, w_height,
-                  0, 0, w_width, w_height,
-                  0, 0, DIB_RGB_COLORS, BLACKNESS);
 }
 
 LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
@@ -455,43 +444,38 @@ struct conversion_parameters {
     float scale;
 };
 
-conversion_parameters compute_dimensions_from_radius(bitmap image, int radius) {
+void compute_dimensions_from_radius(bitmap image, conversion_parameters *param) {
 
-    conversion_parameters param;
-    param.radius = radius;
-    param.x_caps = 0;
-    param.y_caps = 0;
-    param.scale  = 1.0;
+    param->x_caps = 0;
+    param->y_caps = 0;
 
     int bmp_w = image.Width;
     int bmp_h = image.Height;
 
-    int delta_horizontal = 2 * radius;
-    int current_x = radius;
-    while (current_x + radius < bmp_w) {
+    int delta_horizontal = 2 * param->radius;
+    int current_x = param->radius;
+    while (current_x + param->radius < bmp_w) {
         current_x += delta_horizontal;
-        param.x_caps++;
+        param->x_caps++;
     }
 
-    int delta_vertical = (SQRT_2 * radius) + 0.5;
-    int current_y = radius;
-    while (current_y + radius < bmp_h) {
+    int delta_vertical = (SQRT_2 * param->radius) + 0.5;
+    int current_y = param->radius;
+    while (current_y + param->radius < bmp_h) {
         current_y += delta_vertical;
-        param.y_caps++;
+        param->y_caps++;
     }
-
-    return param;
 }
 
 
-conversion_parameters compute_dimensions_from_x_caps(bitmap image, int x_caps) {
-    conversion_parameters param;
-    return param;
+void compute_dimensions_from_x_caps(bitmap image, conversion_parameters *param) {
+    param->radius = image.Width / (param->x_caps * 2);
+    compute_dimensions_from_radius(image, param);
 }
 
-conversion_parameters compute_dimensions_from_y_caps(bitmap image, int y_caps) {
-    conversion_parameters param;
-    return param;
+void compute_dimensions_from_y_radius(bitmap image, conversion_parameters *param) {
+    param->radius = image.Height / (param->y_caps * SQRT_2);
+    compute_dimensions_from_radius(image, param);
 }
 
 void compute_caps_dimensions(bitmap image, int radius, int *horizontal_caps, int *vertical_caps) {
@@ -675,8 +659,6 @@ int main(void) {
     initialize_main_buffer();
     start_main_window();
     
-    reset_window_background();
-
     int max_cap_width  = 0;
     int max_cap_height = 0;
 
@@ -697,6 +679,7 @@ int main(void) {
     const int file_name_size = 400;
     char file_name[file_name_size] = "Courtois.jpg";
     int save_counter = 1; // Todo: start counter at the last already saved image +1
+    bool saved_changes = true;
 
     bitmap image;
     image.Memory = stbi_load(file_name, &image.Width, &image.Height, &Bpp, 0);
@@ -705,8 +688,10 @@ int main(void) {
         premultiply_alpha(&image);
     }
 
-    int displayed_radius = 4;
-    auto param = compute_dimensions_from_radius(image, displayed_radius);
+    conversion_parameters param;
+    param.radius = 4;
+    param.scale  = 3;
+    compute_dimensions_from_radius(image, &param);
 
     bitmap result_bitmap = create_image(image, param);
 
@@ -749,9 +734,11 @@ int main(void) {
     all_buttons[btn_length++] = &radius_minus_btn;
     
     while (true) {
+        // Handle Messages
         auto result = handle_window_messages();
         if (result == -1) return 0;
 
+        // Handle Inputs
         int pressed = button_pressed(all_buttons, btn_length);
         switch (pressed) {
             case -1: break;
@@ -784,6 +771,7 @@ int main(void) {
                     break;
                 }
                 save_counter++;
+                saved_changes = true;
             } break;
             case SOURCE_BTN: {
                 char temp_file_name[file_name_size];
@@ -798,7 +786,7 @@ int main(void) {
                     adjust_bpp(&image, Bpp);
                     premultiply_alpha(&image);
 
-                    param = compute_dimensions_from_radius(image, displayed_radius);
+                    compute_dimensions_from_radius(image, &param);
 
                     memcpy(file_name, temp_file_name, file_name_size);
                     save_counter = 1;
@@ -809,24 +797,29 @@ int main(void) {
             } break;
             case RESULT_BTN: {
                 free(result_bitmap.Memory);
+                param.scale = 4;
                 result_bitmap = create_image(image, param);
+                saved_changes = false;
             } break;
             case RADIUS_PLUS_BTN: {
-                displayed_radius++;
-                param = compute_dimensions_from_radius(image, displayed_radius);
+                param.radius++;
+                compute_dimensions_from_radius(image, &param);
             } break;
             case RADIUS_MINUS_BTN: {
-                displayed_radius--;
-                if (displayed_radius == 0) displayed_radius = 1;
-                param = compute_dimensions_from_radius(image, displayed_radius);
+                param.radius--;
+                if (param.radius == 0) param.radius = 1;
+                compute_dimensions_from_radius(image, &param);
             } break;
         }
         handled_press = true;
 
+        // Render
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         for (int i = 0; i < btn_length; i++) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
         }
+
+        if (!saved_changes) render_rectangle(save_btn.rect, {0, 100, 0, 255}, 5);
 
         if (image.Memory) {
             RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
@@ -837,6 +830,7 @@ int main(void) {
             RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
             render_bitmap_to_screen(&result_bitmap, rect_r.left, rect_r.top, rect_r.right - rect_r.left, rect_r.bottom - rect_r.top);
         }
+
         blit_main_buffer_to_window();
     }
 }

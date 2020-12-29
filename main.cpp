@@ -6,9 +6,10 @@ using namespace std;
     - Save with the correct number
     - Blit background of the results with black
     - Save image in different file formats (.png, .bmp, .jpg)
+    - Option to compute automatically at every param change
     - Clean up buttons generation
+    - Get rid of the printfs
 UI:
-    - Render text
     - Better rendering in the window
     - Zoom in and out in the window
 */
@@ -17,6 +18,8 @@ UI:
 #include "stb_image_write.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
 
 typedef unsigned char      uint8;
 typedef unsigned short     uint16;
@@ -55,6 +58,157 @@ bool changed_size = false;
 
 #define Total_Caps 121 // Don't know why only 99 load
 bitmap caps_data[Total_Caps];
+
+#define FIRST_CHAR_SAVED 32
+#define LAST_CHAR_SAVED  126
+#define CHAR_SAVED_RANGE LAST_CHAR_SAVED - FIRST_CHAR_SAVED + 1
+
+struct Font_Data {
+    int   size;
+    float scale;
+    
+    int ascent;
+    int descent;
+    int baseline;
+    
+    int line_gap;
+    
+    int advance;
+    int line_height;
+    
+    int vertical_offset;
+    
+    stbtt_fontinfo info;
+
+    stbtt_pack_context *spc;
+    stbtt_packedchar   chardata[CHAR_SAVED_RANGE];
+};
+
+struct Color {
+    int R;
+    int G;
+    int B;
+    int A;
+};
+
+const Color WHITE      = {255, 255, 255, 255};
+const Color DARK_WHITE = {180, 180, 180, 255};
+const Color LIGHT_GRAY = { 95,  95,  95, 255};
+const Color GRAY       = { 50,  50,  50, 255};
+const Color BLACK      = {  0,   0,   0, 255};
+const Color GREEN      = { 70, 200,  80, 255};
+const Color DARK_GREEN = { 50, 125,  60, 255};
+const Color BLUE       = { 56, 185, 245, 255};
+const Color DARK_BLUE  = {  5, 108, 156, 255};
+
+
+const int Packed_Font_W = 1000;
+const int Packed_Font_H = 400;
+
+void init_font(int size, Font_Data *Font)
+{
+    char ttf_buffer[1<<20];
+    Font->size = size;
+
+    fread(ttf_buffer, 1, 1<<20, fopen("c:/Windows/Fonts/consola.ttf", "rb"));
+
+    stbtt_InitFont(&Font->info, (const uint8 *) ttf_buffer, stbtt_GetFontOffsetForIndex((const uint8 *) ttf_buffer, 0));
+    stbtt_GetFontVMetrics(&Font->info, &(Font->ascent), &(Font->descent), &(Font->line_gap));
+
+    Font->scale       = stbtt_ScaleForPixelHeight(&Font->info, Font->size);
+    Font->baseline    = STBTT_iceil(Font->scale * Font->ascent); // Prevent the baseline to be rounded down (mem leaks)
+    Font->line_height = (Font->ascent - Font->descent + Font->line_gap) * Font->scale;
+
+    // Pack char data
+    uint8 temp_bitmap[Packed_Font_W][Packed_Font_H];
+    Font->spc = (stbtt_pack_context *) malloc(sizeof(stbtt_pack_context));
+
+    stbtt_PackBegin(Font->spc, temp_bitmap[0], Packed_Font_W, Packed_Font_H, 0, 1, NULL);
+    stbtt_PackSetOversampling(Font->spc, 1, 1);
+    stbtt_PackFontRange(Font->spc, (const uint8 *) ttf_buffer, 0, size, FIRST_CHAR_SAVED, CHAR_SAVED_RANGE, Font->chardata);    
+    stbtt_PackEnd(Font->spc);
+
+    // Set advance and vertical_offset
+    Font->advance         = 0;
+    Font->vertical_offset = 0;
+    for (char ch = FIRST_CHAR_SAVED; ch <= LAST_CHAR_SAVED; ch++) {
+        int maybe_new_advance, maybe_new_offset;
+        float xpos = 0;
+        float ypos = Font->baseline;
+        stbtt_aligned_quad quad;
+
+        stbtt_GetCodepointHMetrics(&Font->info, ch, &maybe_new_advance, &maybe_new_offset); // last argument is not important
+        stbtt_GetPackedQuad(Font->chardata, 1, 1, ch - FIRST_CHAR_SAVED, &xpos, &ypos, &quad, true);
+        maybe_new_offset = (int)quad.y0;
+
+        if (maybe_new_advance > Font->advance)         Font->advance         = maybe_new_advance;
+        if (maybe_new_offset  < Font->vertical_offset) Font->vertical_offset = maybe_new_offset;
+    }
+    if (Font->vertical_offset > 0) Font->vertical_offset = 0;
+    if (Font->vertical_offset < 0) Font->vertical_offset = -Font->vertical_offset;
+}
+
+void render_text(char *text, int length, Font_Data Font, RECT dest_rect, Color c = {255, 255, 255, 255}) {
+    float xpos = (dest_rect.left + dest_rect.right) / 2 - (length * Font.advance * Font.scale) / 2;
+    float ypos = dest_rect.top + Font.baseline - 5;
+    stbtt_aligned_quad quad;
+
+    int x, y;
+    
+    for (uint8 ch = 0; ch < length; ch++) {
+
+        stbtt_GetPackedQuad(Font.chardata, 1, 1, text[ch] - FIRST_CHAR_SAVED, &xpos, &ypos, &quad, true);
+        
+        uint32 *Dest   = (uint32 *) Main_Buffer.Memory + (uint32) (Main_Buffer.Width * (quad.y0 + Font.vertical_offset) + quad.x0);
+        uint8  *Source = Font.spc->pixels + (uint32) (Packed_Font_W * quad.t0 + quad.s0);
+        for (y = 0; y < quad.y1 - quad.y0; y++) {
+            for (x = 0; x < quad.x1 - quad.x0; x++) {
+                float SA = *Source / 255.0;
+                uint8 SR = c.R * SA;
+                uint8 SG = c.G * SA;
+                uint8 SB = c.B * SA;
+
+                float DA = ((*Dest & 0xff000000) >> 24) / 255.0;
+                uint8 DR = ((*Dest & 0x00ff0000) >> 16);
+                uint8 DG = ((*Dest & 0x0000ff00) >>  8);
+                uint8 DB = ((*Dest & 0x000000ff) >>  0);
+
+                uint8 A = 255 * (SA + DA - SA*DA);
+                uint8 R = DR * (1 - SA) + SR;
+                uint8 G = DG * (1 - SA) + SG;
+                uint8 B = DB * (1 - SA) + SB;
+
+                *Dest = (A << 24) | (R << 16) | (G << 8) | B;
+                Source++;
+                Dest++;
+            }
+            Source += (uint32) (Packed_Font_W     - (quad.s1 - quad.s0));
+            Dest   += (uint32) (Main_Buffer.Width - (quad.x1 - quad.x0));
+        }
+
+        xpos = ceil(xpos);
+        // if (xpos + Font.advance * Font.scale > Packed_Font_W) return;
+    }
+}
+
+void render_text(int number, Font_Data Font, RECT dest_rect, Color c = {255, 255, 255, 255}) {
+    char *text = (char *)to_string(number).c_str();
+    
+    int length;
+    for (length = 0; text[length] != '\0'; length++) {}
+    
+    render_text(text, length, Font, dest_rect, c);
+}
+
+void render_text(float number, int digits, Font_Data Font, RECT dest_rect, Color c = {255, 255, 255, 255}) {
+    char *text = (char *)to_string(number).c_str();
+    
+    int length;
+    for (length = 0; text[length] != '\0'; length++) {}
+    length = length < digits + 2 ? length : digits + 2;
+
+    render_text(text, length, Font, dest_rect, c);
+}
 
 void initialize_main_buffer()
 {
@@ -145,7 +299,7 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
 }
 
 
-#define INITIAL_WIDTH  1200
+#define INITIAL_WIDTH  1300
 #define INITIAL_HEIGHT 800
 
 void start_main_window()
@@ -179,13 +333,6 @@ int handle_window_messages() {
     }
     return 0;
 }
-
-struct Color {
-    int R;
-    int G;
-    int B;
-    int A;
-};
 
 #define max(a,b) ((a) > (b)) ? (a) : (b);
 #define min(a,b) ((a) < (b)) ? (a) : (b);
@@ -628,6 +775,11 @@ enum button_codes {
     SCALE_MINUS_BTN,
 };
 
+RECT get_rect_from_dim(int x, int y, int width, int height) {
+    RECT result = {x, y, x + width, y + height};
+    return result;
+}
+
 int main(void) {
     initialize_main_buffer();
     start_main_window();
@@ -635,8 +787,8 @@ int main(void) {
     memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
     blit_main_buffer_to_window();
     
-    int max_cap_width  = 0;
-    int max_cap_height = 0;
+    Font_Data Font;
+    init_font(60, &Font);
 
     int Bpp;
     for (int i = 0; i < Total_Caps; i++) {
@@ -646,10 +798,6 @@ int main(void) {
         assert(Bpp == Bytes_Per_Pixel);
 
         premultiply_alpha(&caps_data[i]);
-
-        // printf("Loaded %s w: %d h: %d\n", to_string(i+1).c_str(), caps_data[i].Width, caps_data[i].Height);
-        if (caps_data[i].Width  > max_cap_width)  max_cap_width  = caps_data[i].Width;
-        if (caps_data[i].Height > max_cap_height) max_cap_height = caps_data[i].Height;
     }
 
     const int file_name_size = 400;
@@ -657,19 +805,13 @@ int main(void) {
     int save_counter = 1; // Todo: start counter at the last already saved image +1
     bool saved_changes = true;
 
-    bitmap image;
-    image.Memory = stbi_load(file_name, &image.Width, &image.Height, &Bpp, 0);
-    if (image.Memory) {
-        adjust_bpp(&image, Bpp);
-        premultiply_alpha(&image);
-    }
+    bitmap image = {0};
+    bitmap result_bitmap = {0};
 
     conversion_parameters param;
     param.radius = 20;
     param.scale  = 1;
     compute_dimensions_from_radius(image, &param);
-
-    bitmap result_bitmap = create_image(image, param);
 
     button *all_buttons[100];
     int btn_length = 0;
@@ -681,59 +823,73 @@ int main(void) {
     button ycaps_plus_btn, ycaps_minus_btn;
     button scale_plus_btn, scale_minus_btn;
 
-    source_image_btn.rect = {50, 50, 450, 750};
+    int btn_side = 50;
+    int plus_btn_x  = 700;
+    int minus_btn_x = 500;
+
+    source_image_btn.rect = {50, 50, 450, 600};
     source_image_btn.side = 5;
-    source_image_btn.c    = {140, 140, 140, 255};
+    source_image_btn.c    = LIGHT_GRAY;
     source_image_btn.code = SOURCE_BTN;
+    RECT source_description_rect = get_rect_from_dim(50, 600, 400, btn_side);
     
-    result_image_btn.rect = {700, 50, 1100, 750};
+    result_image_btn.rect = {800, 50, 1200, 600};
     result_image_btn.side = 5;
-    result_image_btn.c    = {140, 140, 140, 255};
+    result_image_btn.c    = LIGHT_GRAY;
     result_image_btn.code = RESULT_BTN;
+    RECT result_description_rect = get_rect_from_dim(800, 600, 400, btn_side);
     
-    radius_plus_btn.rect = {600, 50, 650, 100};
+    radius_plus_btn.rect = get_rect_from_dim(plus_btn_x, 100, btn_side, btn_side);
     radius_plus_btn.side = 100;
-    radius_plus_btn.c    = {255, 255, 255, 255};
+    radius_plus_btn.c    = DARK_WHITE;
     radius_plus_btn.code = RADIUS_PLUS_BTN;
     
-    radius_minus_btn.rect = {500, 50, 550, 100};
+    radius_minus_btn.rect = get_rect_from_dim(minus_btn_x, 100, btn_side, btn_side);
     radius_minus_btn.side = 100;
-    radius_minus_btn.c    = {100, 100, 100, 255};
+    radius_minus_btn.c    = DARK_WHITE;
     radius_minus_btn.code = RADIUS_MINUS_BTN;
+    RECT radius_value_rect = {radius_minus_btn.rect.right, radius_plus_btn.rect.top, radius_plus_btn.rect.left, radius_plus_btn.rect.bottom};
+    RECT radius_name_rect  = {radius_minus_btn.rect.right, radius_plus_btn.rect.top - btn_side * 1.2, radius_plus_btn.rect.left, radius_plus_btn.rect.top};
 
-    xcaps_plus_btn.rect = {600, 150, 650, 200};
+    xcaps_plus_btn.rect = get_rect_from_dim(plus_btn_x, 250, btn_side, btn_side);
     xcaps_plus_btn.side = 100;
-    xcaps_plus_btn.c    = {255, 255, 255, 255};
+    xcaps_plus_btn.c    = DARK_WHITE;
     xcaps_plus_btn.code = XCAPS_PLUS_BTN;
     
-    xcaps_minus_btn.rect = {500, 150, 550, 200};
+    xcaps_minus_btn.rect = get_rect_from_dim(minus_btn_x, 250, btn_side, btn_side);
     xcaps_minus_btn.side = 100;
-    xcaps_minus_btn.c    = {100, 100, 100, 255};
+    xcaps_minus_btn.c    = DARK_WHITE;
     xcaps_minus_btn.code = XCAPS_MINUS_BTN;
+    RECT xcaps_value_rect = {xcaps_minus_btn.rect.right, xcaps_plus_btn.rect.top, xcaps_plus_btn.rect.left, xcaps_plus_btn.rect.bottom};
+    RECT xcaps_name_rect  = {xcaps_minus_btn.rect.right, xcaps_plus_btn.rect.top - btn_side * 1.2, xcaps_plus_btn.rect.left, xcaps_plus_btn.rect.top};
 
-    ycaps_plus_btn.rect = {600, 250, 650, 300};
+    ycaps_plus_btn.rect = get_rect_from_dim(plus_btn_x, 400, btn_side, btn_side);
     ycaps_plus_btn.side = 100;
-    ycaps_plus_btn.c    = {255, 255, 255, 255};
+    ycaps_plus_btn.c    = DARK_WHITE;
     ycaps_plus_btn.code = YCAPS_PLUS_BTN;
     
-    ycaps_minus_btn.rect = {500, 250, 550, 300};
+    ycaps_minus_btn.rect = get_rect_from_dim(minus_btn_x, 400, btn_side, btn_side);
     ycaps_minus_btn.side = 100;
-    ycaps_minus_btn.c    = {100, 100, 100, 255};
+    ycaps_minus_btn.c    = DARK_WHITE;
     ycaps_minus_btn.code = YCAPS_MINUS_BTN;
+    RECT ycaps_value_rect = {ycaps_minus_btn.rect.right, ycaps_plus_btn.rect.top, ycaps_plus_btn.rect.left, ycaps_plus_btn.rect.bottom};
+    RECT ycaps_name_rect  = {ycaps_minus_btn.rect.right, ycaps_plus_btn.rect.top - btn_side * 1.2, ycaps_plus_btn.rect.left, ycaps_plus_btn.rect.top};
     
-    scale_plus_btn.rect = {600, 350, 650, 400};
+    scale_plus_btn.rect = get_rect_from_dim(plus_btn_x, 550, btn_side, btn_side);
     scale_plus_btn.side = 100;
-    scale_plus_btn.c    = {255, 255, 255, 255};
+    scale_plus_btn.c    = DARK_WHITE;
     scale_plus_btn.code = SCALE_PLUS_BTN;
     
-    scale_minus_btn.rect = {500, 350, 550, 400};
+    scale_minus_btn.rect = get_rect_from_dim(minus_btn_x, 550, btn_side, btn_side);
     scale_minus_btn.side = 100;
-    scale_minus_btn.c    = {100, 100, 100, 255};
+    scale_minus_btn.c    = DARK_WHITE;
     scale_minus_btn.code = SCALE_MINUS_BTN;
+    RECT scale_value_rect = {scale_minus_btn.rect.right, scale_plus_btn.rect.top, scale_plus_btn.rect.left, scale_plus_btn.rect.bottom};
+    RECT scale_name_rect  = {scale_minus_btn.rect.right, scale_plus_btn.rect.top - btn_side * 1.2, scale_plus_btn.rect.left, scale_plus_btn.rect.top};
 
-    save_btn.rect = {500, 450, 650, 500};
+    save_btn.rect = get_rect_from_dim(minus_btn_x, 650, plus_btn_x - minus_btn_x + btn_side, btn_side);
     save_btn.side = 100;
-    save_btn.c    = {50, 180, 50, 255};
+    save_btn.c    = BLUE;
     save_btn.code = SAVE_BTN;
 
     all_buttons[btn_length++] = &source_image_btn;
@@ -811,51 +967,45 @@ int main(void) {
 
             } break;
             case RESULT_BTN: {
-                free(result_bitmap.Memory);
-                result_bitmap = create_image(image, param);
-                saved_changes = false;
+                if (image.Memory) {
+                    free(result_bitmap.Memory);
+                    result_bitmap = create_image(image, param);
+                    saved_changes = false;
+                }
             } break;
             case RADIUS_PLUS_BTN: {
                 param.radius++;
                 compute_dimensions_from_radius(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case RADIUS_MINUS_BTN: {
                 param.radius--;
                 if (param.radius == 0) param.radius = 1;
                 compute_dimensions_from_radius(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case XCAPS_PLUS_BTN: {
                 param.x_caps++;
                 compute_dimensions_from_x_caps(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case XCAPS_MINUS_BTN: {
                 param.x_caps--;
                 if (param.x_caps == 0) param.x_caps = 1;
                 compute_dimensions_from_x_caps(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case YCAPS_PLUS_BTN: {
                 param.y_caps++;
                 compute_dimensions_from_y_caps(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case YCAPS_MINUS_BTN: {
                 param.y_caps--;
                 if (param.y_caps == 0) param.y_caps = 1;
                 compute_dimensions_from_y_caps(image, &param);
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case SCALE_PLUS_BTN: {
                 param.scale += 0.1;
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
             case SCALE_MINUS_BTN: {
                 param.scale -= 0.1;
                 if (param.scale <= 0.1) param.scale = 0.1;
-                printf("r: %d, x: %d, y: %d, scale: %f\n", param.radius, param.x_caps, param.y_caps, param.scale);
             } break;
         }
         handled_press = true;
@@ -864,9 +1014,42 @@ int main(void) {
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         for (int i = 0; i < btn_length; i++) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
+            if (all_buttons[i]->code == SCALE_PLUS_BTN || all_buttons[i]->code == XCAPS_PLUS_BTN ||
+                all_buttons[i]->code == YCAPS_PLUS_BTN || all_buttons[i]->code == RADIUS_PLUS_BTN) {
+                char text[2] = "+";
+                render_text(text, 1, Font, all_buttons[i]->rect, BLACK);
+            }
+            
+            if (all_buttons[i]->code == SCALE_MINUS_BTN || all_buttons[i]->code == XCAPS_MINUS_BTN ||
+                all_buttons[i]->code == YCAPS_MINUS_BTN || all_buttons[i]->code == RADIUS_MINUS_BTN) {
+                char text[2] = "-";
+                render_text(text, 1, Font, all_buttons[i]->rect, BLACK);
+            }
         }
 
-        if (!saved_changes) render_rectangle(save_btn.rect, {0, 100, 0, 255}, 5);
+
+        render_text(param.radius, Font,   radius_value_rect, BLUE);
+        render_text(param.x_caps, Font,   xcaps_value_rect,  BLUE);
+        render_text(param.y_caps, Font,   ycaps_value_rect,  BLUE);
+        render_text(param.scale, 2, Font, scale_value_rect,  BLUE);
+
+        char text[10];
+        strncpy(text, "Radius", 6);
+        render_text(text, 6, Font, radius_name_rect, DARK_BLUE);
+        strncpy(text, "X caps", 6);
+        render_text(text, 6, Font, xcaps_name_rect, DARK_BLUE);
+        strncpy(text, "Y caps", 6);
+        render_text(text, 6, Font, ycaps_name_rect, DARK_BLUE);
+        strncpy(text, "Scale", 5);
+        render_text(text, 5, Font, scale_name_rect, DARK_BLUE);
+        strncpy(text, "Save", 4);
+        render_text(text, 4, Font, save_btn.rect, DARK_BLUE);
+        strncpy(text, "Source", 6);
+        render_text(text, 6, Font, source_description_rect, DARK_BLUE);
+        strncpy(text, "Processed", 9);
+        render_text(text, 9, Font, result_description_rect, DARK_BLUE);
+
+        if (!saved_changes) render_rectangle(save_btn.rect, DARK_BLUE, 5);
 
         if (image.Memory) {
             RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);

@@ -110,7 +110,7 @@ void init_font(int size, Font_Data *Font)
     char ttf_buffer[1<<20];
     Font->size = size;
 
-    fread(ttf_buffer, 1, 1<<20, fopen("c:/Windows/Fonts/consola.ttf", "rb"));
+    fread(ttf_buffer, 1, 1<<20, fopen("Font/consola.ttf", "rb"));
 
     stbtt_InitFont(&Font->info, (const uint8 *) ttf_buffer, stbtt_GetFontOffsetForIndex((const uint8 *) ttf_buffer, 0));
     stbtt_GetFontVMetrics(&Font->info, &(Font->ascent), &(Font->descent), &(Font->line_gap));

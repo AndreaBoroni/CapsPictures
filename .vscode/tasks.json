@@ -13,6 +13,7 @@
                 "stb_image.h",
                 "-lgdi32",
                 "-lComdlg32",
+                "-w",
             ],
             "problemMatcher": [ "$gcc" ],
             "group": { 

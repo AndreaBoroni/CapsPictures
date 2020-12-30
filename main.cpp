@@ -3,10 +3,9 @@
 using namespace std;
 
 /* Todo list:
+    - Make button to swap red and blue
     - Save with the correct number
-    - Blit background of the results with black
     - Clean up buttons generation
-    - Get rid of the printfs
     - Show save button active only if the params have changed
     - Different modes to compute the image (by color ...)
 UI:
@@ -81,6 +80,12 @@ struct Font_Data {
     stbtt_packedchar   chardata[N_SIZES][CHAR_SAVED_RANGE];
 };
 
+enum font_types {
+    Small_Font  = 0,
+    Medium_Font = 1,
+    Big_Font    = 2,
+};
+
 Font_Data Font;
 
 struct Color {
@@ -99,6 +104,7 @@ const Color GREEN      = { 70, 200,  80, 255};
 const Color DARK_GREEN = { 50, 125,  60, 255};
 const Color BLUE       = { 56, 185, 245, 255};
 const Color DARK_BLUE  = {  5, 108, 156, 255};
+const Color ERROR_RED  = {201,  36,  24, 255};
 
 
 const int Packed_Font_W = 500;
@@ -128,7 +134,7 @@ void init_font(int sizes[])
 
 void render_text(char *text, int length, int font_type, RECT dest_rect, Color c = {255, 255, 255, 255}) {
     float xpos = (dest_rect.left + dest_rect.right) / 2 - (length * Font.advance * Font.scale[font_type]) / 2;
-    float ypos = (dest_rect.top + dest_rect.bottom) / 2 + Font.ascent * Font.scale[font_type] / 2;
+    float ypos = (dest_rect.top + dest_rect.bottom) / 2 + Font.ascent * Font.scale[font_type] / 2 - 4;
     stbtt_aligned_quad quad;
 
     int x, y;
@@ -146,10 +152,10 @@ void render_text(char *text, int length, int font_type, RECT dest_rect, Color c 
                 uint8 SG = c.G * SA;
                 uint8 SB = c.B * SA;
 
-                float DA = ((*Dest & 0xff000000) >> 24) / 255.0;
-                uint8 DR = ((*Dest & 0x00ff0000) >> 16);
-                uint8 DG = ((*Dest & 0x0000ff00) >>  8);
-                uint8 DB = ((*Dest & 0x000000ff) >>  0);
+                float DA = ((*Dest >> 24) & 0xff) / 255.0;
+                uint8 DR =  (*Dest >> 16) & 0xff;
+                uint8 DG =  (*Dest >>  8) & 0xff;
+                uint8 DB =  (*Dest >>  0) & 0xff;
 
                 uint8 A = 255 * (SA + DA - SA*DA);
                 uint8 R = DR * (1 - SA) + SR;
@@ -392,22 +398,22 @@ void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width
             x_bitmap = (X - x) * width_scale;
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * Source->Width];
 
-            float SA = ((source_pixel & 0xff000000) >> 24) / 255.0;
-            uint8 SB = ((source_pixel & 0x00ff0000) >> 16);
-            uint8 SG = ((source_pixel & 0x0000ff00) >>  8);
-            uint8 SR = ((source_pixel & 0x000000ff) >>  0);
+            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            uint8 SR =  (source_pixel >> 16) & 0xff;
+            uint8 SG =  (source_pixel >>  8) & 0xff;
+            uint8 SB =  (source_pixel >>  0) & 0xff;
 
-            float DA = ((*Pixel & 0xff000000) >> 24) / 255.0;
-            uint8 DB = ((*Pixel & 0x00ff0000) >> 16);
-            uint8 DG = ((*Pixel & 0x0000ff00) >>  8);
-            uint8 DR = ((*Pixel & 0x000000ff) >>  0);
+            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
+            uint8 DR =  (*Pixel >> 16) & 0xff;
+            uint8 DG =  (*Pixel >>  8) & 0xff;
+            uint8 DB =  (*Pixel >>  0) & 0xff;
 
             uint8 A = 255 * (SA + DA - SA*DA);
             uint8 R = DR * (1 - SA) + SR;
             uint8 G = DG * (1 - SA) + SG;
             uint8 B = DB * (1 - SA) + SB;
 
-            *Pixel = (A << 24) | (B << 16) | (G << 8) | R;
+            *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
             Pixel++;
         }
         Row += Dest_Pitch;
@@ -446,15 +452,15 @@ void render_bitmap_to_screen(bitmap *Source, int x, int y, int width, int height
             x_bitmap = (X - x) * width_scale;
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * Source->Width];
 
-            float SA = ((source_pixel & 0xff000000) >> 24) / 255.0;
-            uint8 SB = ((source_pixel & 0x00ff0000) >> 16);
-            uint8 SG = ((source_pixel & 0x0000ff00) >>  8);
-            uint8 SR = ((source_pixel & 0x000000ff) >>  0);
+            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            uint8 SR =  (source_pixel >> 16) & 0xff;
+            uint8 SG =  (source_pixel >>  8) & 0xff;
+            uint8 SB =  (source_pixel >>  0) & 0xff;
 
-            float DA = ((*Pixel & 0xff000000) >> 24) / 255.0;
-            uint8 DR = ((*Pixel & 0x00ff0000) >> 16);
-            uint8 DG = ((*Pixel & 0x0000ff00) >>  8);
-            uint8 DB = ((*Pixel & 0x000000ff) >>  0);
+            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
+            uint8 DR =  (*Pixel >> 16) & 0xff;
+            uint8 DG =  (*Pixel >>  8) & 0xff;
+            uint8 DB =  (*Pixel >>  0) & 0xff;
 
             uint8 A = 255 * (SA + DA - SA*DA);
             uint8 R = DR * (1 - SA) + SR;
@@ -466,6 +472,62 @@ void render_bitmap_to_screen(bitmap *Source, int x, int y, int width, int height
         }
         Row += Dest_Pitch;
     }
+}
+
+int get_w(RECT rect) { return rect.right - rect.left; }
+int get_h(RECT rect) { return rect.bottom - rect.top; }
+
+void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
+    int starting_x = max(dest_rect.left, 0);
+    int starting_y = max(dest_rect.top,  0);
+    int ending_x   = min(dest_rect.right,  Main_Buffer.Width);
+    int ending_y   = min(dest_rect.bottom, Main_Buffer.Height);
+    
+    if (starting_x > Main_Buffer.Width)  return;
+    if (starting_y > Main_Buffer.Height) return;
+    if (ending_x < 0) return;
+    if (ending_y < 0) return;
+
+    int x_bitmap, y_bitmap;
+
+    int Dest_Pitch = Main_Buffer.Width * Bytes_Per_Pixel;
+    uint8 *Row     = (uint8 *)  Main_Buffer.Memory;
+    uint32 *Texels = (uint32 *) Source->Memory;
+    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
+
+    float width_scale  = (float) get_w(source_rect) / (float) get_w(dest_rect);
+    float height_scale = (float) get_h(source_rect) / (float) get_h(dest_rect);
+
+    for (int Y = starting_y; Y < ending_y; Y++) {        
+        uint32 *Pixel = (uint32 *)Row;
+        y_bitmap = (Y - dest_rect.top) * height_scale;
+        for (int X = starting_x; X < ending_x; X++) {
+            x_bitmap = (X - dest_rect.left) * width_scale;
+
+            uint32 texel_position = (x_bitmap + source_rect.left) + (y_bitmap + source_rect.top) * Source->Width;
+            uint32 source_pixel = Texels[texel_position];
+
+            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            uint8 SR =  (source_pixel >> 16) & 0xff;
+            uint8 SG =  (source_pixel >>  8) & 0xff;
+            uint8 SB =  (source_pixel >>  0) & 0xff;
+
+            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
+            uint8 DR =  (*Pixel >> 16) & 0xff;
+            uint8 DG =  (*Pixel >>  8) & 0xff;
+            uint8 DB =  (*Pixel >>  0) & 0xff;
+
+            uint8 A = 255 * (SA + DA - SA*DA);
+            uint8 R = DR * (1 - SA) + SR;
+            uint8 G = DG * (1 - SA) + SG;
+            uint8 B = DB * (1 - SA) + SB;
+
+            *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
+            Pixel++;
+        }
+        Row += Dest_Pitch;
+    }
+
 }
 
 struct v2 {
@@ -630,16 +692,28 @@ void adjust_bpp(bitmap *image, int Bpp) {
     assert(false);
 }
 
+void swap_red_and_blue_channels(bitmap *image) {
+    uint32 *Pixels = (uint32 *) image->Memory;
+    for (int p = 0; p < image->Width * image->Height; p++) {
+        uint8 A = (Pixels[p] >> 24) & 0xff;
+        uint8 B = (Pixels[p] >> 16) & 0xff;
+        uint8 G = (Pixels[p] >>  8) & 0xff;
+        uint8 R = (Pixels[p] >>  0) & 0xff;
+        
+        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
+    }
+}
+
 void premultiply_alpha(bitmap *image) {
     uint32 *Pixels = (uint32 *) image->Memory;
     for (int p = 0; p < image->Width * image->Height; p++) {
-        uint8 A = ((Pixels[p] & 0xff000000) >> 24);
+        uint8 A = ((Pixels[p] >> 24) & 0xff);
         float A_scaled = (float) A / 255.0;
-        uint8 B = ((Pixels[p] & 0x00ff0000) >> 16) * A_scaled;
-        uint8 G = ((Pixels[p] & 0x0000ff00) >>  8) * A_scaled;
-        uint8 R = ((Pixels[p] & 0x000000ff) >>  0) * A_scaled;
+        uint8 R = ((Pixels[p] >> 16) & 0xff) * A_scaled;
+        uint8 G = ((Pixels[p] >>  8) & 0xff) * A_scaled;
+        uint8 B = ((Pixels[p] >>  0) & 0xff) * A_scaled;
         
-        Pixels[p] = (A << 24) | (B << 16) | (G << 8) | (R << 0);
+        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
 }
 
@@ -661,9 +735,14 @@ bitmap create_image(bitmap image, conversion_parameters param) {
     result_bitmap.Memory = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
     // TODO: look into having a black background for saving the images better
-    // for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) result_bitmap.Memory[i*4] = 255;
+    for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+        result_bitmap.Memory[i*4 + 0] = 0;
+        result_bitmap.Memory[i*4 + 1] = 0;
+        result_bitmap.Memory[i*4 + 2] = 0;
+        result_bitmap.Memory[i*4 + 3] = 255;
+    }
     
-    memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    // memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     for (int i = 0; i < param.x_caps * param.y_caps; i++) {
         blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - blit_radius, centers[i].y - blit_radius, blit_radius * 2, blit_radius * 2);
     }
@@ -677,13 +756,65 @@ struct button {
     int side;
     
     Color c;
-    string text;
 
     bool visible;
     int code;
-
-    bitmap bmp;
 };
+
+struct Error_Report {
+    bool active;
+
+    RECT rect;
+    int  rect_side;
+
+    Color rect_color;
+    Color text_color;
+
+    char text[260];
+    int  length;
+
+    int type;
+};
+
+enum Error_Types {
+    LOADING_CAPS,
+    LOADING_SOURCE,
+    SAVING_RESULT,
+};
+
+Error_Report error = {0};
+
+void render_error() {
+    if (!error.active) return;
+
+    render_rectangle(error.rect, error.rect_color, error.rect_side);
+    render_text(error.text, error.length, Small_Font, error.rect, error.text_color);
+}
+
+void report_error(char *text, int length, int type) {
+    memcpy(error.text, text, length);
+    error.length = length;
+    error.type   = type;
+    error.active = true;
+
+    error.rect.left   = 50;
+    error.rect.top    = 700;
+    error.rect.right  = error.rect.left + (length + 3) * Font.advance * Font.scale[Small_Font];
+    error.rect.bottom = error.rect.top + 40;
+
+    error.rect_side = 3;
+
+    error.text_color = ERROR_RED;
+    error.rect_color = WHITE;
+}
+
+void clear_error() {
+    error.active = false;
+}
+
+void clear_error(int type) {
+    if (error.type == type) error.active = false;
+}
 
 RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width, int source_height) {
     RECT result;
@@ -774,11 +905,17 @@ RECT get_rect_from_dim(int x, int y, int width, int height) {
     return result;
 }
 
-enum font_types {
-    Small_Font  = 0,
-    Medium_Font = 1,
-    Big_Font    = 2,
-};
+int get_dot_index(char *file_name, int file_name_size) {
+    for (int i = 0; i < file_name_size; i++) {
+        if (file_name[i] == '\0') {
+            while (i >= 0) {
+                if (file_name[i] == '.') return i;
+                i--;
+            }
+        }
+    }
+    return -1;
+}
 
 int main(void) {
     initialize_main_buffer();
@@ -794,9 +931,15 @@ int main(void) {
     for (int i = 0; i < Total_Caps; i++) {
         string filepath = "Caps/Cap " + to_string(i + 1) + ".png";
         caps_data[i].Memory = stbi_load(filepath.c_str(), &caps_data[i].Width, &caps_data[i].Height, &Bpp, Bytes_Per_Pixel);
-        if (caps_data[i].Memory == NULL) printf("ERROR loading file: %s\n", filepath.c_str());
+        if (caps_data[i].Memory == NULL) {
+            char error_text[260];
+            memcpy(error_text, "ERROR loading file: ", 21);
+            strcat(error_text, filepath.c_str());
+            report_error(error_text, strlen(error_text), LOADING_CAPS);
+        }
         assert(Bpp == Bytes_Per_Pixel);
 
+        swap_red_and_blue_channels(&caps_data[i]);
         premultiply_alpha(&caps_data[i]);
     }
 
@@ -962,19 +1105,12 @@ int main(void) {
         switch (pressed) {
             case -1: break;
             case SAVE_BTN: {
-                int dot_index = -1;
-                for (int i = 0; i < file_name_size; i++) {
-                    if (file_name[i] == '\0') {
-                        while (i >= 0) {
-                            if (file_name[i] == '.') {
-                                dot_index = i;
-                                break;       
-                            }
-                            i--;
-                        }
-                        break;
-                    }
+                if (!result_bitmap.Memory) {
+                    report_error("Nothing to save", 15, SAVING_RESULT);
+                    break;
                 }
+
+                int dot_index = get_dot_index(file_name, file_name_size);
                 assert(dot_index >= 0);
 
                 char save_file_name[file_name_size + 3];
@@ -982,27 +1118,32 @@ int main(void) {
                 strncpy(save_file_name, file_name, dot_index);
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
-                strcat(save_file_name, file_name + dot_index);
 
                 int success;
-
+                swap_red_and_blue_channels(&result_bitmap);
                 switch (param.format_for_saving) {
                     case PNG:
+                        strcat(save_file_name, ".png");
                         success = stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, Bytes_Per_Pixel * result_bitmap.Width);
                         break;
                     case BMP:
+                        strcat(save_file_name, ".bmp");
                         success = stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
                         break;
                     case JPG:
+                        strcat(save_file_name, ".jpg");
                         success = stbi_write_jpg(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, 100);
                         break;
                     default: assert(false);
                 }
+                swap_red_and_blue_channels(&result_bitmap);
 
                 if (success == 0) {
-                    printf("Failed to write image to file!!\n");
+                    report_error("Failed to save result", 21, SAVING_RESULT);
                     break;
                 }
+                
+                clear_error(SAVING_RESULT);
                 save_counter++;
                 saved_changes = true;
             } break;
@@ -1017,14 +1158,22 @@ int main(void) {
 
                 if (image.Memory) {
                     adjust_bpp(&image, Bpp);
+                    // swap_red_and_blue_channels(&image);
                     premultiply_alpha(&image);
 
-                    compute_dimensions_from_radius(image, &param);
-
                     memcpy(file_name, temp_file_name, file_name_size);
-                    save_counter = 1;
+
+                    compute_dimensions_from_radius(image, &param);
+                    int dot_index = get_dot_index(file_name, file_name_size);
+
+                    if (memcmp(&file_name[dot_index + 1], "png", 3) == 0) param.format_for_saving = PNG;
+                    if (memcmp(&file_name[dot_index + 1], "jpg", 3) == 0) param.format_for_saving = JPG;
+                    if (memcmp(&file_name[dot_index + 1], "bmp", 3) == 0) param.format_for_saving = BMP;
+
+                    save_counter = 1; // Todo: Not necessarily
+                    clear_error(LOADING_SOURCE);
                 } else {
-                    printf("Unable to open file!\n");
+                    report_error("Failed to open file", 19, LOADING_SOURCE);
                 }
 
             } break;
@@ -1101,6 +1250,7 @@ int main(void) {
             }
         }
 
+        render_error();
 
         render_text(param.radius, Medium_Font,   radius_value_rect, BLUE);
         render_text(param.x_caps, Medium_Font,   xcaps_value_rect,  BLUE);
@@ -1139,12 +1289,34 @@ int main(void) {
 
         if (image.Memory) {
             RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
-            render_bitmap_to_screen(&image, rect_s.left, rect_s.top, rect_s.right - rect_s.left, rect_s.bottom - rect_s.top);
+
+            float zoom = max(1.0, param.scale);
+            v2 center = {0, 0};
+
+            RECT source_rect = get_rect_from_dim(0, 0, image.Width, image.Height);
+
+            // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
+            // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;
+            // source_rect.top    += (1 - 1 / zoom) * get_h(source_rect) / 2;
+            // source_rect.bottom -= (1 - 1 / zoom) * get_h(source_rect) / 2;
+
+            render_bitmap_to_screen(&image, rect_s, source_rect);
         }
 
         if (result_bitmap.Memory) {
             RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
-            render_bitmap_to_screen(&result_bitmap, rect_r.left, rect_r.top, rect_r.right - rect_r.left, rect_r.bottom - rect_r.top);
+
+            float zoom = max(1.0, param.scale);
+            v2 center = {0, 0};
+
+            RECT source_rect = get_rect_from_dim(0, 0, result_bitmap.Width, result_bitmap.Height);
+
+            // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
+            // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;
+            // source_rect.top    += (1 - 1 / zoom) * get_h(source_rect) / 2;
+            // source_rect.bottom -= (1 - 1 / zoom) * get_h(source_rect) / 2;
+
+            render_bitmap_to_screen(&result_bitmap, rect_r, source_rect);
         }
 
         blit_main_buffer_to_window();

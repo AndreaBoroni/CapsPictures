@@ -557,7 +557,7 @@ void compute_centers(v2 *centers, int x_caps, int y_caps, int radius) {
     }
 }
 
-float compute_gray_value(bitmap image, int center_x, int center_y, int radius) {
+float compute_color_average(bitmap image, int center_x, int center_y, int radius, uint8 R_mask = 0xff, uint8 G_mask = 0xff, uint8 B_mask = 0xff) {
     int sum   = 0;
     int count = 0;
 
@@ -578,13 +578,13 @@ float compute_gray_value(bitmap image, int center_x, int center_y, int radius) {
     for (int Y = starting_y; Y < ending_y; Y++) {        
         uint32 *Pixel = (uint32 *)Row;   
         for (int X = starting_x; X < ending_x; X++) {
-            uint8 R = (*Pixel >> 16) & 0xff;
-            uint8 G = (*Pixel >>  8) & 0xff;
-            uint8 B = (*Pixel >>  0) & 0xff;
+            uint8 R = (*Pixel >> 16) & R_mask;
+            uint8 G = (*Pixel >>  8) & G_mask;
+            uint8 B = (*Pixel >>  0) & B_mask;
             Pixel++;
 
-            sum += (R + G + B) / 3;
-            count++;
+            sum   += (R + G + B) / 3;
+            count += ((*Pixel >> 24) & 0xff) / 255.0; // scale by the alpha value
         }
         Row += Pitch;
     }
@@ -618,6 +618,19 @@ struct conversion_parameters {
     int format_for_saving;
 };
 
+void shuffle(v2 *array, int array_length, int shuffle_times)
+{
+    for (int i = 0; i < shuffle_times; i++) {
+        for (int v = 0; v < array_length - 1; v++) {
+            if (rand() % 2 == 0) {
+                v2 temp = array[v];
+                array[v] = array[v + 1];
+                array[v + 1] = temp;
+            }
+        } 
+    }
+}
+
 int *compute_indexes(bitmap image, v2 *centers, conversion_parameters param) {
 
     int number_of_centers = param.x_caps * param.y_caps;
@@ -627,7 +640,7 @@ int *compute_indexes(bitmap image, v2 *centers, conversion_parameters param) {
     int max_index = 0;
 
     for (int i = 0; i < number_of_centers; i++) {
-        auto gray_value = compute_gray_value(image, centers[i].x, centers[i].y, param.radius);
+        auto gray_value = compute_color_average(image, centers[i].x, centers[i].y, param.radius);
         indexes[i] = (gray_value / 255.0) * (Total_Caps - 1);
         
         assert(gray_value >= 0);
@@ -643,6 +656,50 @@ int *compute_indexes(bitmap image, v2 *centers, conversion_parameters param) {
         indexes[i] = (indexes[i] - min_index) * scale;
         indexes[i] = clamp(indexes[i], 0, Total_Caps); // should not happen (just to be sure)
         if (param.inverse) indexes[i] = Total_Caps - indexes[i] - 1;
+    }
+
+    return indexes;
+}
+
+int *compute_indexes_by_color(bitmap image, v2 *centers, conversion_parameters param) {
+
+    int number_of_centers = param.x_caps * param.y_caps;
+    int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
+
+    Color caps_colors[Total_Caps];
+
+    for (int i = 0; i < Total_Caps; i++) {
+        caps_colors[i].R = compute_color_average(caps_data[i], 0, 0, caps_data[i].Width, 0xff, 0, 0);
+        caps_colors[i].G = compute_color_average(caps_data[i], 0, 0, caps_data[i].Width, 0, 0xff, 0);
+        caps_colors[i].B = compute_color_average(caps_data[i], 0, 0, caps_data[i].Width, 0, 0, 0xff);
+    }
+
+    for (int i = 0; i < number_of_centers; i++) {
+        auto R_value = compute_color_average(image, centers[i].x, centers[i].y, param.radius, 0xff, 0, 0);
+        auto G_value = compute_color_average(image, centers[i].x, centers[i].y, param.radius, 0, 0xff, 0);
+        auto B_value = compute_color_average(image, centers[i].x, centers[i].y, param.radius, 0, 0, 0xff);
+
+        float min_distance = 1;
+        int   min_index    = -1;
+        for (int j = 0; j < Total_Caps; j++) {
+            float distance = (caps_colors[j].R - R_value) * (caps_colors[j].R - R_value) +
+                             (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value) +
+                             (caps_colors[j].B - B_value) * (caps_colors[j].B - B_value);
+            distance /= 3.0 * 255.0 * 255.0;
+            
+            if (param.inverse) {
+                distance = max((caps_colors[j].R - R_value) * (caps_colors[j].R - R_value), (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value));
+                distance = max((caps_colors[j].B - B_value) * (caps_colors[j].B - B_value), distance);
+                distance /= 255.0 * 255.0;
+            }
+
+            if (distance <= min_distance) {
+                min_distance = distance;
+                min_index    = j;
+            }
+        }
+        assert(min_index >= 0);
+        indexes[i] = min_index;
     }
 
     return indexes;
@@ -720,8 +777,11 @@ void premultiply_alpha(bitmap *image) {
 bitmap create_image(bitmap image, conversion_parameters param) {
     v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
     compute_centers(centers, param.x_caps, param.y_caps, param.radius);
+    shuffle(centers, param.x_caps * param.y_caps, 1000); // Todo: make this an option
 
-    int *indexes = compute_indexes(image, centers, param);
+    int *indexes;
+    if (param.inverse) indexes = compute_indexes_by_color(image, centers, param);
+    else               indexes = compute_indexes(image, centers, param);
 
     int blit_radius = param.radius * param.scale;
     for (int i = 0; i < param.x_caps * param.y_caps; i++) {
@@ -751,7 +811,7 @@ bitmap create_image(bitmap image, conversion_parameters param) {
     return result_bitmap;
 }
 
-struct button {
+struct Button {
     RECT rect;
     int side;
     
@@ -760,6 +820,76 @@ struct button {
     bool visible;
     int code;
 };
+
+struct Toggler {
+    Button btn;
+    bool toggled;
+
+    RECT inside_rect;
+
+    RECT  name_rect;
+    char *name;
+    int   name_length;
+    Color name_color;
+
+    int   name_font_type;
+};
+
+RECT get_rect(int x, int y, int width, int height) {
+    RECT result = {x, y, x + width, y + height};
+    return result;
+}
+
+Button make_button(RECT rect, int side, Color color, int code) {
+    Button result;
+    
+    result.rect = rect;
+    result.side = side;
+    
+    result.c = color;
+    result.visible = true;
+    result.code = code;
+    
+    return result;
+}
+
+Toggler make_toggler(Button btn, int where_text, char *name, int name_length, Color name_color, int font_type) {
+    Toggler result;
+
+    result.btn = btn;
+    result.toggled = false;
+
+    result.inside_rect.left   = btn.rect.left   + btn.side * 2;
+    result.inside_rect.right  = btn.rect.right  - btn.side * 2;
+    result.inside_rect.top    = btn.rect.top    + btn.side * 2;
+    result.inside_rect.bottom = btn.rect.bottom - btn.side * 2;
+
+    result.name = (char *) malloc(name_length);
+    memcpy(result.name, name, name_length);
+    result.name_length = name_length;
+    result.name_color  = name_color;
+    result.name_font_type = font_type;
+
+    int name_width = (name_length + 2) * Font.advance * Font.scale[font_type];
+    switch (where_text) {
+        case 0: // right
+            result.name_rect = get_rect(btn.rect.right, btn.rect.top, name_width, get_h(btn.rect));
+            break;
+        case 1: // top 
+            int left = (btn.rect.right + btn.rect.left - name_width) / 2;
+            int top  = btn.rect.top - get_h(btn.rect);
+            result.name_rect = get_rect(left, top, name_width, get_h(btn.rect));
+            break;
+    }
+
+    return result;
+}
+
+void render_toggler(Toggler toggler) {
+    render_rectangle(toggler.btn.rect, toggler.btn.c, toggler.btn.side);
+    if (toggler.toggled) render_filled_rectangle(toggler.inside_rect, toggler.btn.c);
+    render_text(toggler.name, toggler.name_length, Small_Font, toggler.name_rect, toggler.name_color);
+}
 
 struct Error_Report {
     bool active;
@@ -834,7 +964,7 @@ RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width,
     return result;
 }
 
-int button_pressed(button *btn[], int btn_length) {
+int button_pressed(Button *btn[], int btn_length, Toggler *tgl[], int tgl_length) {
 
     if (!left_button_down || handled_press) return -1;
 
@@ -857,6 +987,25 @@ int button_pressed(button *btn[], int btn_length) {
 
         return btn[i]->code;
     }
+    
+    for (int i = 0; i < tgl_length; i++) {
+        bool pressed = true;
+        if (v.x < tgl[i]->btn.rect.left)   pressed = false;
+        if (v.x > tgl[i]->btn.rect.right)  pressed = false;
+        if (v.y < tgl[i]->btn.rect.top)    pressed = false;
+        if (v.y > tgl[i]->btn.rect.bottom) pressed = false;
+
+        if (pressed) return tgl[i]->btn.code;
+
+        pressed = true;
+        if (v.x < tgl[i]->name_rect.left)   pressed = false;
+        if (v.x > tgl[i]->name_rect.right)  pressed = false;
+        if (v.y < tgl[i]->name_rect.top)    pressed = false;
+        if (v.y > tgl[i]->name_rect.bottom) pressed = false;
+
+        if (pressed) return tgl[i]->btn.code;
+    }
+
     return -1;
 }
 
@@ -899,11 +1048,6 @@ enum button_codes {
     JPG_BTN,
     BMP_BTN,
 };
-
-RECT get_rect_from_dim(int x, int y, int width, int height) {
-    RECT result = {x, y, x + width, y + height};
-    return result;
-}
 
 int get_dot_index(char *file_name, int file_name_size) {
     for (int i = 0; i < file_name_size; i++) {
@@ -959,17 +1103,20 @@ int main(void) {
     param.inverse = false;
     param.format_for_saving = PNG;
 
-    button *all_buttons[100];
+    Button *all_buttons[100];
     int btn_length = 0;
 
-    button source_image_btn, result_image_btn;
-    button save_btn;
-    button radius_plus_btn, radius_minus_btn;
-    button xcaps_plus_btn, xcaps_minus_btn;
-    button ycaps_plus_btn, ycaps_minus_btn;
-    button scale_plus_btn, scale_minus_btn;
-    button inverse_btn, inverse_name_btn;
-    button png_btn, jpg_btn, bmp_btn;
+    Toggler *all_togglers[100];
+    int tgl_length = 0;
+
+    Button source_image_btn, result_image_btn;
+    Button save_btn;
+    Button radius_plus_btn, radius_minus_btn;
+    Button xcaps_plus_btn, xcaps_minus_btn;
+    Button ycaps_plus_btn, ycaps_minus_btn;
+    Button scale_plus_btn, scale_minus_btn;
+    Button inverse_btn;
+    Button png_btn, jpg_btn, bmp_btn;
 
     int btn_side = 50;
     int plus_btn_x  = 700;
@@ -979,56 +1126,56 @@ int main(void) {
     source_image_btn.side = 5;
     source_image_btn.c    = LIGHT_GRAY;
     source_image_btn.code = SOURCE_BTN;
-    RECT source_description_rect = get_rect_from_dim(50, 600, 400, btn_side);
+    RECT source_description_rect = get_rect(50, 600, 400, btn_side);
     
     result_image_btn.rect = {800, 50, 1200, 600};
     result_image_btn.side = 5;
     result_image_btn.c    = LIGHT_GRAY;
     result_image_btn.code = RESULT_BTN;
-    RECT result_description_rect = get_rect_from_dim(800, 600, 400, btn_side);
+    RECT result_description_rect = get_rect(800, 600, 400, btn_side);
     
-    radius_plus_btn.rect = get_rect_from_dim(plus_btn_x, 80, btn_side, btn_side);
+    radius_plus_btn.rect = get_rect(plus_btn_x, 80, btn_side, btn_side);
     radius_plus_btn.side = 100;
     radius_plus_btn.c    = DARK_WHITE;
     radius_plus_btn.code = RADIUS_PLUS_BTN;
     
-    radius_minus_btn.rect = get_rect_from_dim(minus_btn_x, 80, btn_side, btn_side);
+    radius_minus_btn.rect = get_rect(minus_btn_x, 80, btn_side, btn_side);
     radius_minus_btn.side = 100;
     radius_minus_btn.c    = DARK_WHITE;
     radius_minus_btn.code = RADIUS_MINUS_BTN;
     RECT radius_value_rect = {radius_minus_btn.rect.right, radius_plus_btn.rect.top, radius_plus_btn.rect.left, radius_plus_btn.rect.bottom};
     RECT radius_name_rect  = {radius_minus_btn.rect.right, radius_plus_btn.rect.top - btn_side, radius_plus_btn.rect.left, radius_plus_btn.rect.top};
 
-    xcaps_plus_btn.rect = get_rect_from_dim(plus_btn_x, 180, btn_side, btn_side);
+    xcaps_plus_btn.rect = get_rect(plus_btn_x, 180, btn_side, btn_side);
     xcaps_plus_btn.side = 100;
     xcaps_plus_btn.c    = DARK_WHITE;
     xcaps_plus_btn.code = XCAPS_PLUS_BTN;
     
-    xcaps_minus_btn.rect = get_rect_from_dim(minus_btn_x, 180, btn_side, btn_side);
+    xcaps_minus_btn.rect = get_rect(minus_btn_x, 180, btn_side, btn_side);
     xcaps_minus_btn.side = 100;
     xcaps_minus_btn.c    = DARK_WHITE;
     xcaps_minus_btn.code = XCAPS_MINUS_BTN;
     RECT xcaps_value_rect = {xcaps_minus_btn.rect.right, xcaps_plus_btn.rect.top, xcaps_plus_btn.rect.left, xcaps_plus_btn.rect.bottom};
     RECT xcaps_name_rect  = {xcaps_minus_btn.rect.right, xcaps_plus_btn.rect.top - btn_side, xcaps_plus_btn.rect.left, xcaps_plus_btn.rect.top};
 
-    ycaps_plus_btn.rect = get_rect_from_dim(plus_btn_x, 280, btn_side, btn_side);
+    ycaps_plus_btn.rect = get_rect(plus_btn_x, 280, btn_side, btn_side);
     ycaps_plus_btn.side = 100;
     ycaps_plus_btn.c    = DARK_WHITE;
     ycaps_plus_btn.code = YCAPS_PLUS_BTN;
     
-    ycaps_minus_btn.rect = get_rect_from_dim(minus_btn_x, 280, btn_side, btn_side);
+    ycaps_minus_btn.rect = get_rect(minus_btn_x, 280, btn_side, btn_side);
     ycaps_minus_btn.side = 100;
     ycaps_minus_btn.c    = DARK_WHITE;
     ycaps_minus_btn.code = YCAPS_MINUS_BTN;
     RECT ycaps_value_rect = {ycaps_minus_btn.rect.right, ycaps_plus_btn.rect.top, ycaps_plus_btn.rect.left, ycaps_plus_btn.rect.bottom};
     RECT ycaps_name_rect  = {ycaps_minus_btn.rect.right, ycaps_plus_btn.rect.top - btn_side, ycaps_plus_btn.rect.left, ycaps_plus_btn.rect.top};
     
-    scale_plus_btn.rect = get_rect_from_dim(plus_btn_x, 380, btn_side, btn_side);
+    scale_plus_btn.rect = get_rect(plus_btn_x, 380, btn_side, btn_side);
     scale_plus_btn.side = 100;
     scale_plus_btn.c    = DARK_WHITE;
     scale_plus_btn.code = SCALE_PLUS_BTN;
     
-    scale_minus_btn.rect = get_rect_from_dim(minus_btn_x, 380, btn_side, btn_side);
+    scale_minus_btn.rect = get_rect(minus_btn_x, 380, btn_side, btn_side);
     scale_minus_btn.side = 100;
     scale_minus_btn.c    = DARK_WHITE;
     scale_minus_btn.code = SCALE_MINUS_BTN;
@@ -1036,44 +1183,36 @@ int main(void) {
     RECT scale_name_rect  = {scale_minus_btn.rect.right, scale_plus_btn.rect.top - btn_side, scale_plus_btn.rect.left, scale_plus_btn.rect.top};
     
     int inverse_side = btn_side / 20;
-    inverse_btn.rect = get_rect_from_dim(minus_btn_x, 450, btn_side / 2, btn_side / 2);
+    inverse_btn.rect = get_rect(minus_btn_x, 450, btn_side / 2, btn_side / 2);
     inverse_btn.side = inverse_side;
     inverse_btn.c    = DARK_WHITE;
     inverse_btn.code = INVERSE_BTN;
-    
-    inverse_name_btn.rect = get_rect_from_dim(minus_btn_x, 450, 3 * btn_side, btn_side / 2);
-    inverse_name_btn.side = 0;
-    inverse_name_btn.c    = BLACK;
-    inverse_name_btn.code = INVERSE_BTN;
-    RECT inverse_rect = get_rect_from_dim(inverse_btn.rect.left + 2 * inverse_side, inverse_btn.rect.top + 2 * inverse_side,
-                                          btn_side / 2 - 4 * inverse_side, btn_side / 2 - 4 * inverse_side);
 
+    Toggler inverse_toggler;
+    inverse_toggler = make_toggler(inverse_btn, 0, "Inverse", 7, DARK_BLUE, Small_Font);
+    
     int format_side = btn_side / 20;
-    png_btn.rect = get_rect_from_dim(minus_btn_x + btn_side / 2, 520, btn_side / 2, btn_side / 2);
+    png_btn.rect = get_rect(minus_btn_x + btn_side / 2, 520, btn_side / 2, btn_side / 2);
     png_btn.side = format_side;
     png_btn.c    = DARK_WHITE;
     png_btn.code = PNG_BTN;
-    RECT png_rect = get_rect_from_dim(png_btn.rect.left + 2 * format_side, png_btn.rect.top + 2 * format_side,
-                                          btn_side / 2 - 4 * format_side, btn_side / 2 - 4 * format_side);
-    RECT png_name_rect = get_rect_from_dim(png_btn.rect.left, png_btn.rect.top - btn_side / 2, btn_side / 2, btn_side / 2);
-    
-    bmp_btn.rect = get_rect_from_dim((minus_btn_x + btn_side / 2 + plus_btn_x) / 2, 520, btn_side / 2, btn_side / 2);
+
+    bmp_btn.rect = get_rect((minus_btn_x + btn_side / 2 + plus_btn_x) / 2, 520, btn_side / 2, btn_side / 2);
     bmp_btn.side = format_side;
     bmp_btn.c    = DARK_WHITE;
     bmp_btn.code = BMP_BTN;
-    RECT bmp_rect = get_rect_from_dim(bmp_btn.rect.left + 2 * format_side, bmp_btn.rect.top + 2 * format_side,
-                                          btn_side / 2 - 4 * format_side, btn_side / 2 - 4 * format_side);
-    RECT bmp_name_rect = get_rect_from_dim(bmp_btn.rect.left, bmp_btn.rect.top - btn_side / 2, btn_side / 2, btn_side / 2);
     
-    jpg_btn.rect = get_rect_from_dim(plus_btn_x, 520, btn_side / 2, btn_side / 2);
+    jpg_btn.rect = get_rect(plus_btn_x, 520, btn_side / 2, btn_side / 2);
     jpg_btn.side = format_side;
     jpg_btn.c    = DARK_WHITE;
     jpg_btn.code = JPG_BTN;
-    RECT jpg_rect = get_rect_from_dim(jpg_btn.rect.left + 2 * format_side, jpg_btn.rect.top + 2 * format_side,
-                                          btn_side / 2 - 4 * format_side, btn_side / 2 - 4 * format_side);
-    RECT jpg_name_rect = get_rect_from_dim(jpg_btn.rect.left, bmp_btn.rect.top - btn_side / 2, btn_side / 2, btn_side / 2);
 
-    save_btn.rect = get_rect_from_dim(minus_btn_x, 650, plus_btn_x - minus_btn_x + btn_side, btn_side);
+    Toggler png_toggler, bmp_toggler, jpg_toggler;
+    png_toggler = make_toggler(png_btn, 1, "png", 3, DARK_BLUE, Small_Font);
+    bmp_toggler = make_toggler(bmp_btn, 1, "bmp", 3, DARK_BLUE, Small_Font);
+    jpg_toggler = make_toggler(jpg_btn, 1, "jpg", 3, DARK_BLUE, Small_Font);
+
+    save_btn.rect = get_rect(minus_btn_x, 650, plus_btn_x - minus_btn_x + btn_side, btn_side);
     save_btn.side = 100;
     save_btn.c    = BLUE;
     save_btn.code = SAVE_BTN;
@@ -1089,11 +1228,11 @@ int main(void) {
     all_buttons[btn_length++] = &ycaps_minus_btn;
     all_buttons[btn_length++] = &scale_plus_btn;
     all_buttons[btn_length++] = &scale_minus_btn;
-    all_buttons[btn_length++] = &inverse_btn;
-    all_buttons[btn_length++] = &inverse_name_btn;
-    all_buttons[btn_length++] = &png_btn;
-    all_buttons[btn_length++] = &jpg_btn;
-    all_buttons[btn_length++] = &bmp_btn;
+
+    all_togglers[tgl_length++] = &inverse_toggler;
+    all_togglers[tgl_length++] = &png_toggler;
+    all_togglers[tgl_length++] = &bmp_toggler;
+    all_togglers[tgl_length++] = &jpg_toggler;
     
     while (true) {
         // Handle Messages
@@ -1101,7 +1240,8 @@ int main(void) {
         if (result == -1) return 0;
 
         // Handle Inputs
-        int pressed = button_pressed(all_buttons, btn_length);
+        int pressed = button_pressed(all_buttons, btn_length, all_togglers, tgl_length);
+
         switch (pressed) {
             case -1: break;
             case SAVE_BTN: {
@@ -1235,6 +1375,7 @@ int main(void) {
 
         // Render
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
+        
         for (int i = 0; i < btn_length; i++) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
             if (all_buttons[i]->code == SCALE_PLUS_BTN || all_buttons[i]->code == XCAPS_PLUS_BTN ||
@@ -1248,6 +1389,15 @@ int main(void) {
                 char text[2] = "-";
                 render_text(text, 1, Big_Font, all_buttons[i]->rect, BLACK);
             }
+        }
+
+        png_toggler.toggled = (param.format_for_saving == PNG);
+        bmp_toggler.toggled = (param.format_for_saving == BMP);
+        jpg_toggler.toggled = (param.format_for_saving == JPG);
+        inverse_toggler.toggled = param.inverse;
+
+        for (int i = 0; i < tgl_length; i++) {
+            render_toggler(*all_togglers[i]);
         }
 
         render_error();
@@ -1272,20 +1422,8 @@ int main(void) {
         render_text(text, 6, Big_Font, source_description_rect, DARK_BLUE);
         strncpy(text, "Processed", 9);
         render_text(text, 9, Big_Font, result_description_rect, DARK_BLUE);
-        strncpy(text, "Invert", 6);
-        render_text(text, 6, Small_Font, inverse_name_btn.rect, DARK_BLUE);
-        strncpy(text, "png", 3);
-        render_text(text, 3, Small_Font, png_name_rect, DARK_BLUE);
-        strncpy(text, "bmp", 3);
-        render_text(text, 3, Small_Font, bmp_name_rect, DARK_BLUE);
-        strncpy(text, "jpg", 3);
-        render_text(text, 3, Small_Font, jpg_name_rect, DARK_BLUE);
 
         if (!saved_changes) render_rectangle(save_btn.rect, DARK_BLUE, 5);
-        if (param.inverse)  render_filled_rectangle(inverse_rect, DARK_WHITE);
-        if (param.format_for_saving == PNG) render_filled_rectangle(png_rect, DARK_WHITE);
-        if (param.format_for_saving == JPG) render_filled_rectangle(jpg_rect, DARK_WHITE);
-        if (param.format_for_saving == BMP) render_filled_rectangle(bmp_rect, DARK_WHITE);
 
         if (image.Memory) {
             RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
@@ -1293,7 +1431,7 @@ int main(void) {
             float zoom = max(1.0, param.scale);
             v2 center = {0, 0};
 
-            RECT source_rect = get_rect_from_dim(0, 0, image.Width, image.Height);
+            RECT source_rect = get_rect(0, 0, image.Width, image.Height);
 
             // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
             // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;
@@ -1309,7 +1447,7 @@ int main(void) {
             float zoom = max(1.0, param.scale);
             v2 center = {0, 0};
 
-            RECT source_rect = get_rect_from_dim(0, 0, result_bitmap.Width, result_bitmap.Height);
+            RECT source_rect = get_rect(0, 0, result_bitmap.Width, result_bitmap.Height);
 
             // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
             // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;

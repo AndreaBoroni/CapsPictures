@@ -1402,6 +1402,7 @@ int main(void) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
         }
 
+        // Todo: Find a way to do this better
         png_toggler.toggled = param.save_as_png;
         bmp_toggler.toggled = param.save_as_bmp;
         jpg_toggler.toggled = param.save_as_jpg;

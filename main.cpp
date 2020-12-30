@@ -3,11 +3,11 @@
 using namespace std;
 
 /* Todo list:
+    - Optimize
+    - Don't draw text outside the window
     - Make button to swap red and blue
     - Save with the correct number
     - Clean up buttons generation
-    - Show save button active only if the params have changed
-    - Different modes to compute the image (by color ...)
 UI:
     - Better rendering in the window
     - Zoom in and out in the window
@@ -33,11 +33,15 @@ typedef long long int64;
 #define Bytes_Per_Pixel 4
 struct bitmap
 {
-    uint8 *Memory;
-    int32 Width;
-    int32 Height;
+    uint8 *Memory = NULL;
+    int32 Width   = 0;
+    int32 Height  = 0;
 
-    BITMAPINFO *Info;
+    BITMAPINFO *Info = NULL;
+};
+
+struct v2 {
+    int x, y;
 };
 
 bitmap     Main_Buffer = {0};
@@ -45,12 +49,15 @@ BITMAPINFO Main_Info = {0};
 
 HWND Window = {0};
 
-uint32 key_presses[100]  = {0};
-uint32 key_releases[100] = {0};
-int8 key_presses_length  = 0;
-int8 key_releases_length = 0;
+// uint32 key_presses[100]  = {0};
+// uint32 key_releases[100] = {0};
+// int8 key_presses_length  = 0;
+// int8 key_releases_length = 0;
 bool left_button_down    = false;
 bool right_button_down   = false;
+
+int mousewheel_counter = 0;
+v2  mousewheel_position = {0};
 
 bool handled_press = false;
 bool changed_size = false;
@@ -230,6 +237,19 @@ void blit_main_buffer_to_window()
 
 }
 
+v2 screen_to_window_position(POINT pos) {
+    v2 result;
+
+    RECT rect;
+    GetClientRect( Window, (LPRECT) &rect);
+    ClientToScreen(Window, (LPPOINT)&rect.left);
+    ClientToScreen(Window, (LPPOINT)&rect.right);
+    result.x = pos.x - rect.left;
+    result.y = pos.y - rect.top;
+
+    return result;
+}
+
 LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam)
 {
     LRESULT Result = 0;
@@ -255,19 +275,19 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
         case WM_SYSKEYDOWN:
         case WM_KEYDOWN:
         case WM_KEYUP: {
-            uint32 VKCode = WParam;
-            bool WasDown = ((LParam & (1 << 30)) != 0); // Button released
-            bool IsDown  = ((LParam & (1 << 31)) == 0); // Buttom pressed
+            // uint32 VKCode = WParam;
+            // bool WasDown = ((LParam & (1 << 30)) != 0); // Button released
+            // bool IsDown  = ((LParam & (1 << 31)) == 0); // Buttom pressed
 
-            if (IsDown == WasDown) break;
-            if (WasDown) {
-                key_releases[key_releases_length] = VKCode;
-                key_releases_length++;
-            }
-            if (IsDown) {
-                key_presses[key_presses_length] = VKCode;
-                key_presses_length++;
-            }
+            // if (IsDown == WasDown) break;
+            // if (WasDown) {
+            //     key_releases[key_releases_length] = VKCode;
+            //     key_releases_length++;
+            // }
+            // if (IsDown) {
+            //     key_presses[key_presses_length] = VKCode;
+            //     key_presses_length++;
+            // }
         } break;
         case WM_LBUTTONDOWN:
             left_button_down = true;
@@ -278,6 +298,20 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
             break;
         case WM_RBUTTONDOWN: right_button_down = true;  break;
         case WM_RBUTTONUP:   right_button_down = false; break;
+        case WM_MOUSEWHEEL: {
+            auto key_state = GET_KEYSTATE_WPARAM(WParam);
+            auto delta     = GET_WHEEL_DELTA_WPARAM(WParam);
+
+            if (key_state) break;
+
+            mousewheel_counter += delta;
+
+            POINT pos;
+            pos.x = LOWORD(LParam);
+            pos.y = HIWORD(LParam);
+            mousewheel_position = screen_to_window_position(pos);
+
+        } break;
         default:
             Result = DefWindowProc(Window, Message, WParam, LParam);
             break;
@@ -505,9 +539,20 @@ void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
 
     for (int Y = starting_y; Y < ending_y; Y++) {        
         uint32 *Pixel = (uint32 *)Row;
+        
         y_bitmap = (Y - dest_rect.top) * height_scale;
+        if (y_bitmap + source_rect.top  >= Source->Height || y_bitmap + source_rect.top  < 0) {
+            Row += Dest_Pitch;
+            continue;
+        }
+
         for (int X = starting_x; X < ending_x; X++) {
+
             x_bitmap = (X - dest_rect.left) * width_scale;
+            if (x_bitmap + source_rect.left < 0 || x_bitmap + source_rect.left >= Source->Width) {
+                Pixel++;
+                continue;
+            }
 
             uint32 texel_position = (x_bitmap + source_rect.left) + (y_bitmap + source_rect.top) * Source->Width;
             uint32 source_pixel = Texels[texel_position];
@@ -534,10 +579,6 @@ void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
     }
 
 }
-
-struct v2 {
-    int x, y;
-};
 
 #define SQRT_2 1.4142
 void compute_centers(v2 *centers, int x_caps, int y_caps, int radius) {
@@ -600,35 +641,41 @@ float compute_color_average(bitmap image, int center_x, int center_y, int radius
     else            return (float) sum / (float) count;
 }
 
-int clamp(int value, int min_value, int max_value) {
-    if (value < min_value) return min_value;
-    if (value > max_value) return max_value;
-    return value;
-}
+#define clamp(a, b, c) (((a) > (c)) ? (c) : (((a) < (b)) ? (b) : (a)))
 
-struct conversion_parameters {
-    int x_caps, y_caps;
-    int radius;
+struct Conversion_Parameters {
+    int x_caps = 1;
+    int y_caps = 1;
+    int radius = 10;
     
-    float scale;
+    float scale = 1.0;
 
-    bool inverse;
-    bool by_color;
-    bool hard_max;
+    bool inverse  = false;
+    bool by_color = false;
+    bool hard_max = false;
 
-    bool save_as_png;
-    bool save_as_bmp;
-    bool save_as_jpg;
+    bool save_as_png = true;
+    bool save_as_bmp = false;
+    bool save_as_jpg = false;
 };
 
-conversion_parameters get_defalut_param() {
-    conversion_parameters result = {0};
-    result.radius = 10;
-    result.scale  = 1.0;
+struct Zoom_Parameters {
+    float zoom_level = 1.0;
 
-    result.save_as_png = true;
+    int center_x = 0;
+    int center_y = 0;
+};
 
-    return result;
+void reset_zoom(Zoom_Parameters *zoom, bitmap *image = NULL) {
+    zoom->zoom_level = 1.0;
+
+    if (image) {
+        zoom->center_x = image->Width  / 2;
+        zoom->center_y = image->Height / 2;
+    } else {
+        zoom->center_x = 0;
+        zoom->center_y = 0;
+    }
 }
 
 void shuffle(v2 *array, int array_length, int shuffle_times)
@@ -644,7 +691,7 @@ void shuffle(v2 *array, int array_length, int shuffle_times)
     }
 }
 
-int *compute_indexes(bitmap image, v2 *centers, conversion_parameters param) {
+int *compute_indexes(bitmap image, v2 *centers, Conversion_Parameters param) {
 
     int number_of_centers = param.x_caps * param.y_caps;
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
@@ -674,7 +721,7 @@ int *compute_indexes(bitmap image, v2 *centers, conversion_parameters param) {
     return indexes;
 }
 
-int *compute_indexes_by_color(bitmap image, v2 *centers, conversion_parameters param) {
+int *compute_indexes_by_color(bitmap image, v2 *centers, Conversion_Parameters param) {
 
     int number_of_centers = param.x_caps * param.y_caps;
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
@@ -720,21 +767,21 @@ int *compute_indexes_by_color(bitmap image, v2 *centers, conversion_parameters p
     return indexes;
 }
 
-void compute_dimensions_from_radius(bitmap image, conversion_parameters *param) {
+void compute_dimensions_from_radius(bitmap image, Conversion_Parameters *param) {
     if (param->radius <= 0) param->radius = 1;
     param->x_caps = (float) image.Width  / (float) (2      * param->radius) + 1;
     param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
 }
 
 
-void compute_dimensions_from_x_caps(bitmap image, conversion_parameters *param) {  
+void compute_dimensions_from_x_caps(bitmap image, Conversion_Parameters *param) {  
     if (param->x_caps <= 0) param->x_caps = 1;
     param->radius = (float) image.Width / (float) (param->x_caps * 2);
     if (param->radius <= 0) param->radius = 1;
     param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
 }
 
-void compute_dimensions_from_y_caps(bitmap image, conversion_parameters *param) {
+void compute_dimensions_from_y_caps(bitmap image, Conversion_Parameters *param) {
     if (param->y_caps <= 0) param->y_caps = 1;
     param->radius = (float) image.Width / (float) (param->y_caps * SQRT_2);
     if (param->radius <= 0) param->radius = 1;
@@ -792,7 +839,7 @@ void premultiply_alpha(bitmap *image) {
     }
 }
 
-bitmap create_image(bitmap image, conversion_parameters param) {
+bitmap create_image(bitmap image, Conversion_Parameters param) {
     v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
     compute_centers(centers, param.x_caps, param.y_caps, param.radius);
     shuffle(centers, param.x_caps * param.y_caps, 1000); // Todo: make this an option
@@ -1044,16 +1091,9 @@ int button_pressed(Button *btn[], int btn_length, Toggler *tgl[], int tgl_length
 
     if (!left_button_down || handled_press) return -1;
 
-    v2 v;
     POINT p;
     GetCursorPos(&p);
-
-    RECT rect;
-    GetClientRect( Window, (LPRECT) &rect);
-    ClientToScreen(Window, (LPPOINT)&rect.left);
-    ClientToScreen(Window, (LPPOINT)&rect.right);
-    v.x = p.x - rect.left;
-    v.y = p.y - rect.top;
+    v2 v = screen_to_window_position(p);
 
     for (int i = 0; i < btn_length; i++) {
         if (v2_inside_rect(v, btn[i]->rect)) return btn[i]->code;
@@ -1157,7 +1197,8 @@ int main(void) {
     bitmap image = {0};
     bitmap result_bitmap = {0};
 
-    conversion_parameters param = get_defalut_param();
+    Conversion_Parameters param;
+    Zoom_Parameters source_zoom, result_zoom;
 
     int btn_side        = 50;
     int plus_btn_x      = 700;
@@ -1260,8 +1301,19 @@ int main(void) {
         if (result == -1) return 0;
 
         // Handle Inputs
-        int pressed = button_pressed(all_buttons, btn_length, all_togglers, tgl_length, all_updown_counters, udc_length);
+        if (mousewheel_counter != 0) {
+            if (v2_inside_rect(mousewheel_position, source_image_btn.rect)) {
+                source_zoom.zoom_level += (float) mousewheel_counter / 50.0;
+                source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1, 100);
+            }
+            if (v2_inside_rect(mousewheel_position, result_image_btn.rect)) {
+                result_zoom.zoom_level += (float) mousewheel_counter / 50.0;
+                result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1, 100);
+            }
+            mousewheel_counter = 0;
+        }
 
+        int pressed = button_pressed(all_buttons, btn_length, all_togglers, tgl_length, all_updown_counters, udc_length);
         switch (pressed) {
             case -1: break;
             case SAVE_BTN: {
@@ -1274,10 +1326,10 @@ int main(void) {
                 assert(dot_index >= 0);
 
                 char save_file_name[file_name_size + 3];
-
                 strncpy(save_file_name, file_name, dot_index);
 
                 int success = 0;
+
                 swap_red_and_blue_channels(&result_bitmap);
                 if (param.save_as_png) {
                     save_file_name[dot_index] = '\0';
@@ -1301,14 +1353,13 @@ int main(void) {
                 }
                 swap_red_and_blue_channels(&result_bitmap);
 
-                if (success == 0) {
+                if (success) {
+                    clear_error(SAVING_RESULT);
+                    save_counter++;
+                    saved_changes = true;
+                } else {
                     report_error("Failed to save result", SAVING_RESULT);
-                    break;
-                }
-                
-                clear_error(SAVING_RESULT);
-                save_counter++;
-                saved_changes = true;
+                }                
             } break;
             case SOURCE_BTN: {
                 char temp_file_name[file_name_size];
@@ -1327,6 +1378,7 @@ int main(void) {
                     memcpy(file_name, temp_file_name, file_name_size);
 
                     compute_dimensions_from_radius(image, &param);
+                    reset_zoom(&source_zoom, &image);
 
                     save_counter = 1; // Todo: Not necessarily
                     clear_error(LOADING_SOURCE);
@@ -1339,10 +1391,11 @@ int main(void) {
                 if (image.Memory) {
                     free(result_bitmap.Memory);
                     result_bitmap = create_image(image, param);
+                    reset_zoom(&result_zoom, &result_bitmap);
                     saved_changes = false;
                     clear_error(COMPUTING_RESULT);
                 } else {
-                    report_error("Nothing to process", COMPUTING_RESULT);
+                    report_warning("Nothing to process", COMPUTING_RESULT);
                 }
             } break;
             case RADIUS_PLUS: {
@@ -1373,10 +1426,12 @@ int main(void) {
                 compute_dimensions_from_y_caps(image, &param);
             } break;
             case SCALE_PLUS: {
-                param.scale += 0.1;
+                if (param.scale >= 2) param.scale += 0.5;
+                else                  param.scale += 0.1;
             } break;
             case SCALE_MINUS: {
-                param.scale -= 0.1;
+                if (param.scale >= 2.5) param.scale -= 0.5;
+                else                    param.scale -= 0.1;
                 if (param.scale <= 0.1) param.scale = 0.1;
             } break;
             case INVERSE_BTN:  param.inverse  = !param.inverse; break;
@@ -1436,36 +1491,40 @@ int main(void) {
 
         if (image.Memory) {
             RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
-
-            float zoom = max(1.0, param.scale);
-            v2 center = {0, 0};
-
             RECT source_rect = get_rect(0, 0, image.Width, image.Height);
 
-            // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
-            // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;
-            // source_rect.top    += (1 - 1 / zoom) * get_h(source_rect) / 2;
-            // source_rect.bottom -= (1 - 1 / zoom) * get_h(source_rect) / 2;
+            source_rect.left   += (1.0 - 1.0 / source_zoom.zoom_level) * image.Width  / 2.0;
+            source_rect.right  -= (1.0 - 1.0 / source_zoom.zoom_level) * image.Width  / 2.0;
+            source_rect.top    += (1.0 - 1.0 / source_zoom.zoom_level) * image.Height / 2.0;
+            source_rect.bottom -= (1.0 - 1.0 / source_zoom.zoom_level) * image.Height / 2.0;
+
+            source_rect.left   += source_zoom.center_x - image.Width  / 2.0;
+            source_rect.right  += source_zoom.center_x - image.Width  / 2.0;
+            source_rect.top    += source_zoom.center_y - image.Height / 2.0;
+            source_rect.bottom += source_zoom.center_y - image.Height / 2.0;
 
             render_bitmap_to_screen(&image, rect_s, source_rect);
         }
 
         if (result_bitmap.Memory) {
             RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
+            RECT result_rect = get_rect(0, 0, result_bitmap.Width, result_bitmap.Height);
+            
+            result_rect.left   += (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Width  / 2.0;
+            result_rect.right  -= (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Width  / 2.0;
+            result_rect.top    += (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Height / 2.0;
+            result_rect.bottom -= (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Height / 2.0;
 
-            float zoom = max(1.0, param.scale);
-            v2 center = {0, 0};
+            result_rect.left   += result_zoom.center_x - result_bitmap.Width  / 2.0;
+            result_rect.right  += result_zoom.center_x - result_bitmap.Width  / 2.0;
+            result_rect.top    += result_zoom.center_y - result_bitmap.Height / 2.0;
+            result_rect.bottom += result_zoom.center_y - result_bitmap.Height / 2.0;
 
-            RECT source_rect = get_rect(0, 0, result_bitmap.Width, result_bitmap.Height);
-
-            // source_rect.left   += (1 - 1 / zoom) * get_w(source_rect) / 2;
-            // source_rect.right  -= (1 - 1 / zoom) * get_w(source_rect) / 2;
-            // source_rect.top    += (1 - 1 / zoom) * get_h(source_rect) / 2;
-            // source_rect.bottom -= (1 - 1 / zoom) * get_h(source_rect) / 2;
-
-            render_bitmap_to_screen(&result_bitmap, rect_r, source_rect);
+            render_bitmap_to_screen(&result_bitmap, rect_r, result_rect);
         }
 
         blit_main_buffer_to_window();
+
+        Sleep(10);
     }
 }

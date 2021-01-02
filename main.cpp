@@ -20,6 +20,8 @@ UI:
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
+#define UpDown_(var) ((void *)&(var))
+
 typedef unsigned char      uint8;
 typedef unsigned short     uint16;
 typedef unsigned int       uint32;
@@ -57,7 +59,7 @@ bool left_button_down    = false;
 bool right_button_down   = false;
 
 int mousewheel_counter = 0;
-v2  mousewheel_position = {0};
+v2  mouse_position     = {0};
 
 bool handled_press = false;
 bool changed_size = false;
@@ -271,30 +273,18 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
         case WM_CLOSE: {
             PostQuitMessage(0);
         } break;
-        case WM_SYSKEYUP:
-        case WM_SYSKEYDOWN:
-        case WM_KEYDOWN:
-        case WM_KEYUP: {
-            // uint32 VKCode = WParam;
-            // bool WasDown = ((LParam & (1 << 30)) != 0); // Button released
-            // bool IsDown  = ((LParam & (1 << 31)) == 0); // Buttom pressed
-
-            // if (IsDown == WasDown) break;
-            // if (WasDown) {
-            //     key_releases[key_releases_length] = VKCode;
-            //     key_releases_length++;
-            // }
-            // if (IsDown) {
-            //     key_presses[key_presses_length] = VKCode;
-            //     key_presses_length++;
-            // }
-        } break;
+        // case WM_SYSKEYUP:
+        // case WM_SYSKEYDOWN:
+        // case WM_KEYDOWN:
+        // case WM_KEYUP: {
+        // } break;
         case WM_LBUTTONDOWN:
             left_button_down = true;
-            handled_press = false;
+            handled_press    = false;
             break;
         case WM_LBUTTONUP:
             left_button_down = false;
+            handled_press    = true;
             break;
         case WM_RBUTTONDOWN: right_button_down = true;  break;
         case WM_RBUTTONUP:   right_button_down = false; break;
@@ -303,14 +293,7 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
             auto delta     = GET_WHEEL_DELTA_WPARAM(WParam);
 
             if (key_state) break;
-
             mousewheel_counter += delta;
-
-            POINT pos;
-            pos.x = LOWORD(LParam);
-            pos.y = HIWORD(LParam);
-            mousewheel_position = screen_to_window_position(pos);
-
         } break;
         default:
             Result = DefWindowProc(Window, Message, WParam, LParam);
@@ -321,8 +304,8 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
 }
 
 
-#define INITIAL_WIDTH  1300
-#define INITIAL_HEIGHT 800
+#define INITIAL_WIDTH  1100
+#define INITIAL_HEIGHT 750
 
 void start_main_window()
 {
@@ -356,8 +339,8 @@ int handle_window_messages() {
     return 0;
 }
 
-#define max(a,b) ((a) > (b)) ? (a) : (b);
-#define min(a,b) ((a) < (b)) ? (a) : (b);
+#define max(a,b) (((a) > (b)) ? (a) : (b));
+#define min(a,b) (((a) < (b)) ? (a) : (b));
 
 void render_filled_rectangle(RECT rectangle, Color color)
 {
@@ -650,6 +633,12 @@ struct Conversion_Parameters {
     
     float scale = 1.0;
 
+    int brightness = 50;
+    int contrast   = 50;
+
+    int source_brightness = 50;
+    int source_contrast   = 50;
+
     bool inverse  = false;
     bool by_color = false;
     bool hard_max = false;
@@ -839,7 +828,47 @@ void premultiply_alpha(bitmap *image) {
     }
 }
 
+void apply_brightness(bitmap image, int brightness) {
+    if (brightness == 50) return;
+
+    float scale = 255.0 / 49.0;
+    int b = (brightness - 50) * scale;
+
+    uint32 *pixel = (uint32 *) image.Memory;
+    for (int p = 0; p < image.Width * image.Height; p++) {
+        uint8 A = ((pixel[p] >> 24) & 0xff);
+        uint32 R = clamp((int) ((pixel[p] >> 16) & 0xff) + b, 0, 255);
+        uint32 G = clamp((int) ((pixel[p] >>  8) & 0xff) + b, 0, 255);
+        uint32 B = clamp((int) ((pixel[p] >>  0) & 0xff) + b, 0, 255);
+        
+        pixel[p] = (A << 24) | ((uint8) R << 16) | ((uint8) G << 8) | ((uint8) B << 0);
+    }
+
+}
+
+
+void apply_contrast(bitmap image, int contrast) {
+    float scale = 255.0 / 49.0;
+    int   c = (contrast - 50) * scale;
+    float f = 259.0 / 255.0 * (255.0 + c) / (259.0 - c);
+
+    uint32 *pixel = (uint32 *) image.Memory;
+    for (int p = 0; p < image.Width * image.Height; p++) {
+        uint8 A = ((pixel[p] >> 24) & 0xff);
+        int R_pre = (pixel[p] >> 16) & 0xff;
+        int G_pre = (pixel[p] >>  8) & 0xff;
+        int B_pre = (pixel[p] >>  0) & 0xff;
+        uint32 R = clamp(f * (R_pre - 128) + 128, 0, 255);
+        uint32 G = clamp(f * (G_pre - 128) + 128, 0, 255);
+        uint32 B = clamp(f * (B_pre - 128) + 128, 0, 255);
+        
+        pixel[p] = (A << 24) | ((uint8) R << 16) | ((uint8) G << 8) | ((uint8) B << 0);
+    }
+
+}
+
 bitmap create_image(bitmap image, Conversion_Parameters param) {
+    
     v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
     compute_centers(centers, param.x_caps, param.y_caps, param.radius);
     shuffle(centers, param.x_caps * param.y_caps, 1000); // Todo: make this an option
@@ -871,6 +900,9 @@ bitmap create_image(bitmap image, Conversion_Parameters param) {
         blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - blit_radius, centers[i].y - blit_radius, dim, dim);
     }
 
+    apply_brightness(result_bitmap, param.brightness);
+    apply_contrast(result_bitmap, param.contrast);
+
     free(centers);
     return result_bitmap;
 }
@@ -885,62 +917,6 @@ struct Button {
     int code;
 };
 
-struct Toggler {
-    Button btn;
-    bool toggled;
-
-    RECT inside_rect;
-
-    char *name;
-    int   name_length;
-    int   name_font_type;
-    
-    RECT  name_rect;
-    Color name_color;
-};
-
-struct UpDown_Counter {
-    RECT plus_rect, minus_rect;
-    RECT number_rect;
-
-    Color rect_color;
-    Color plus_minus_color;
-    Color text_color;
-
-    char *name;
-    int   name_length;
-    RECT  name_rect;
-
-    int minus_code;
-    int plus_code;
-
-    int font_type;
-};
-
-UpDown_Counter make_updown_counter(RECT minus_rect, RECT plus_rect, Color rect_c, Color plus_minus_c, Color text_c, char *name, int font_type) {
-    UpDown_Counter result;
-
-    result.minus_rect = minus_rect;
-    result.plus_rect  = plus_rect;
-
-    result.rect_color       = rect_c;
-    result.plus_minus_color = plus_minus_c;
-    result.text_color       = text_c;
-
-    result.name_length = strlen(name);
-    result.name = (char *) malloc(result.name_length);
-    memcpy(result.name, name, result.name_length);
-    
-    result.font_type = font_type;
-
-    result.number_rect = get_rect(minus_rect.right, minus_rect.top, plus_rect.left - minus_rect.right, get_h(minus_rect));
-    result.name_rect   = result.number_rect;
-    result.name_rect.top    -= get_h(minus_rect);
-    result.name_rect.bottom -= get_h(minus_rect);
-
-    return result;
-}
-
 Button make_button(RECT rect, int side, Color color, int code) {
     Button result;
     
@@ -954,57 +930,6 @@ Button make_button(RECT rect, int side, Color color, int code) {
     return result;
 }
 
-Toggler make_toggler(Button btn, int where_text, char *name, Color name_color, int font_type) {
-    Toggler result;
-
-    result.btn = btn;
-    result.toggled = false;
-
-    result.inside_rect.left   = btn.rect.left   + btn.side * 2;
-    result.inside_rect.right  = btn.rect.right  - btn.side * 2;
-    result.inside_rect.top    = btn.rect.top    + btn.side * 2;
-    result.inside_rect.bottom = btn.rect.bottom - btn.side * 2;
-
-    result.name_length = strlen(name);
-    result.name = (char *) malloc(result.name_length);
-    memcpy(result.name, name, result.name_length);
-
-    result.name_color  = name_color;
-    result.name_font_type = font_type;
-
-    int name_width = (result.name_length + 2) * Font.advance * Font.scale[font_type];
-    switch (where_text) {
-        case 0: // right
-            result.name_rect = get_rect(btn.rect.right, btn.rect.top, name_width, get_h(btn.rect));
-            break;
-        case 1: // top 
-            int left = (btn.rect.right + btn.rect.left - name_width) / 2;
-            int top  = btn.rect.top - get_h(btn.rect);
-            result.name_rect = get_rect(left, top, name_width, get_h(btn.rect));
-            break;
-    }
-
-    return result;
-}
-
-void render_toggler(Toggler toggler) {
-    render_rectangle(toggler.btn.rect, toggler.btn.c, toggler.btn.side);
-    if (toggler.toggled) render_filled_rectangle(toggler.inside_rect, toggler.btn.c);
-    render_text(toggler.name, toggler.name_length, Small_Font, toggler.name_rect, toggler.name_color);
-}
-
-void render_updown_counter(UpDown_Counter counter) {
-    render_filled_rectangle(counter.minus_rect, counter.rect_color);
-    render_filled_rectangle(counter.plus_rect,  counter.rect_color);
-    
-    char text[2] = "+";
-    render_text(text, 1, Big_Font, counter.plus_rect,  counter.plus_minus_color);
-    text[0] = '-';
-    render_text(text, 1, Big_Font, counter.minus_rect, counter.plus_minus_color);
-
-    render_text(counter.name, counter.name_length, counter.font_type, counter.name_rect, counter.text_color);
-}
-
 struct Error_Report {
     bool active;
 
@@ -1016,14 +941,6 @@ struct Error_Report {
 
     char text[260];
     int  length;
-
-    int type;
-};
-
-enum Error_Types {
-    LOADING_SOURCE,
-    COMPUTING_RESULT,
-    SAVING_RESULT,
 };
 
 Error_Report error = {0};
@@ -1035,15 +952,14 @@ void render_error() {
     render_text(error.text, error.length, Small_Font, error.rect, error.text_color);
 }
 
-void report_error(char *text, int type) {
+void report_error(char *text) {
     int length = strlen(text);
     memcpy(error.text, text, length);
     error.length = length;
-    error.type   = type;
     error.active = true;
 
     error.rect.left   = 50;
-    error.rect.top    = 700;
+    error.rect.top    = 600;
     error.rect.right  = error.rect.left + (length + 3) * Font.advance * Font.scale[Small_Font];
     error.rect.bottom = error.rect.top + 40;
 
@@ -1053,13 +969,13 @@ void report_error(char *text, int type) {
     error.rect_color = WHITE;
 }
 
-void report_warning(char *text, int type) {
-    report_error(text, type);
+void report_warning(char *text) {
+    report_error(text);
     error.text_color = WARNING;
 }
 
 void clear_error() { error.active = false; }
-void clear_error(int type) { if (error.type == type) error.active = false; }
+// void clear_error(int type) { if (error.type == type) error.active = false; }
 
 RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width, int source_height) {
     RECT result;
@@ -1087,7 +1003,7 @@ inline bool v2_inside_rect(v2 v, RECT rect) {
     return true;
 }
 
-int button_pressed(Button *btn[], int btn_length, Toggler *tgl[], int tgl_length, UpDown_Counter *udc[], int udc_length) {
+int button_pressed(Button *btn[], int btn_length) {
 
     if (!left_button_down || handled_press) return -1;
 
@@ -1097,16 +1013,6 @@ int button_pressed(Button *btn[], int btn_length, Toggler *tgl[], int tgl_length
 
     for (int i = 0; i < btn_length; i++) {
         if (v2_inside_rect(v, btn[i]->rect)) return btn[i]->code;
-    }
-    
-    for (int i = 0; i < tgl_length; i++) {
-        if (v2_inside_rect(v, tgl[i]->btn.rect))  return tgl[i]->btn.code;
-        if (v2_inside_rect(v, tgl[i]->name_rect)) return tgl[i]->btn.code;
-    }
-
-    for (int i = 0; i < udc_length; i++) {
-        if (v2_inside_rect(v, udc[i]->plus_rect))  return udc[i]->plus_code;
-        if (v2_inside_rect(v, udc[i]->minus_rect)) return udc[i]->minus_code;
     }
 
     return -1;
@@ -1137,20 +1043,6 @@ enum button_codes {
     SAVE_BTN,
     SOURCE_BTN,
     RESULT_BTN,
-    INVERSE_BTN,
-    BY_COLOR_BTN,
-    HARD_MAX_BTN,
-    RADIUS_PLUS,
-    RADIUS_MINUS,
-    XCAPS_PLUS,
-    XCAPS_MINUS,
-    YCAPS_PLUS,
-    YCAPS_MINUS,
-    SCALE_PLUS,
-    SCALE_MINUS,
-    PNG_BTN,
-    BMP_BTN,
-    JPG_BTN,
 };
 
 int get_dot_index(char *file_name, int file_name_size) {
@@ -1165,6 +1057,46 @@ int get_dot_index(char *file_name, int file_name_size) {
     return -1;
 }
 
+
+struct Panel {
+    int left_x = 0;
+    int width  = 0;
+    int row_height   = 0;
+    int column_width = 0;
+
+    int at_x = 0;
+    int at_y = 0;
+
+    int font_size = Small_Font;
+
+    void row(int columns = 1);
+    void push_button(char *name, Color button_color, Color text_color, bool *toggled);
+    int  push_updown_counter(char *name, Color button_color, Color text_color, Color value_color, void *value, bool is_float = false);
+    void push_slider(char *text, Color slider_color, Color text_color, Color value_color, int *value, int min_v, int max_v, int slider_order);
+    void add_title(char *title, Color c);
+};
+
+Panel make_panel(int x, int y, int row_height, int width, int font_size) {
+    Panel result;
+
+    result.left_x = x;
+    result.at_x   = x;
+    result.at_y   = y;
+
+    result.width = width;
+    result.row_height = row_height;
+
+    result.font_size = font_size;
+    return result;
+}
+
+struct Slider_Handler {
+    bool pressing_a_slider       = false;
+    int  which_slider_is_pressed = -1;
+};
+
+Slider_Handler sliders;
+
 void shift_down_rect(RECT *rect, int by) { rect->top += by; rect->bottom += by; }
 
 int main(void) {
@@ -1174,7 +1106,7 @@ int main(void) {
     memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
     blit_main_buffer_to_window();
     
-    int sizes[N_SIZES] = {20, 40, 60};
+    int sizes[N_SIZES] = {20, 35, 55};
     init_font(sizes);
 
     int Bpp;
@@ -1201,74 +1133,14 @@ int main(void) {
     Zoom_Parameters source_zoom, result_zoom;
 
     int btn_side        = 50;
-    int plus_btn_x      = 700;
-    int minus_btn_x     = 500;
     int starting_y      = 80;
-    int vertical_offset = 100;
 
-    Button source_image_btn = make_button({50, 50, 450, 600}, 5, LIGHT_GRAY, SOURCE_BTN);
-    RECT   source_description_rect = get_rect(50, 600, 400, btn_side);
+    Button source_image_btn = make_button({50, 50, 400, 500}, 5, LIGHT_GRAY, SOURCE_BTN);
     
-    Button result_image_btn = make_button({800, 50, 1200, 600}, 5, LIGHT_GRAY, RESULT_BTN);
-    RECT   result_description_rect = get_rect(800, 600, 400, btn_side);
+    Button result_image_btn = make_button({650, 50, 1000, 500}, 5, LIGHT_GRAY, RESULT_BTN);
+    RECT   result_description_rect = get_rect(650, 500, 350, btn_side);
 
-    RECT minus_rect, plus_rect;
-    plus_rect  = get_rect(plus_btn_x,  starting_y, btn_side, btn_side);
-    minus_rect = get_rect(minus_btn_x, starting_y, btn_side, btn_side);
-    
-    UpDown_Counter radius_counter = make_updown_counter(minus_rect, plus_rect, DARK_WHITE, BLACK, DARK_BLUE, "Radius", Medium_Font);
-    RECT radius_value_rect = radius_counter.number_rect;
-    radius_counter.plus_code  = RADIUS_PLUS;
-    radius_counter.minus_code = RADIUS_MINUS;
-
-    shift_down_rect(&plus_rect, vertical_offset); shift_down_rect(&minus_rect, vertical_offset);
-    
-    UpDown_Counter xcaps_counter = make_updown_counter(minus_rect, plus_rect, DARK_WHITE, BLACK, DARK_BLUE, "X Caps", Medium_Font);
-    RECT xcaps_value_rect = xcaps_counter.number_rect;
-    xcaps_counter.plus_code  = XCAPS_PLUS;
-    xcaps_counter.minus_code = XCAPS_MINUS;
-    
-    shift_down_rect(&plus_rect, vertical_offset); shift_down_rect(&minus_rect, vertical_offset);
-
-    UpDown_Counter ycaps_counter = make_updown_counter(minus_rect, plus_rect, DARK_WHITE, BLACK, DARK_BLUE, "Y Caps", Medium_Font);
-    RECT ycaps_value_rect = ycaps_counter.number_rect;
-    ycaps_counter.plus_code  = YCAPS_PLUS;
-    ycaps_counter.minus_code = YCAPS_MINUS;
-
-    shift_down_rect(&plus_rect, vertical_offset); shift_down_rect(&minus_rect, vertical_offset);
-
-    UpDown_Counter scale_counter = make_updown_counter(minus_rect, plus_rect, DARK_WHITE, BLACK, DARK_BLUE, "Scale", Medium_Font);
-    RECT scale_value_rect = scale_counter.number_rect;
-    scale_counter.plus_code  = SCALE_PLUS;
-    scale_counter.minus_code = SCALE_MINUS;
-    
-    int small_side      = btn_side / 2;
-    int small_thickness = btn_side / 20;
-
-    Toggler inverse_toggler;
-    Button inverse_btn = make_button(get_rect(minus_btn_x, 450, small_side, small_side), small_thickness, DARK_WHITE, INVERSE_BTN);
-    inverse_toggler = make_toggler(inverse_btn, 0, "Inverse", DARK_BLUE, Small_Font);
-    
-    Toggler by_color_toggler;
-    Button by_color_btn = make_button(get_rect(minus_btn_x, 480, small_side, small_side), small_thickness, DARK_WHITE, BY_COLOR_BTN);
-    by_color_toggler = make_toggler(by_color_btn, 0, "By Color", DARK_BLUE, Small_Font);
-    
-    Toggler hard_max_toggler;
-    Button hard_max_btn = make_button(get_rect(minus_btn_x, 510, small_side, small_side), small_thickness, DARK_WHITE, HARD_MAX_BTN);
-    hard_max_toggler = make_toggler(hard_max_btn, 0, "Hard Max", DARK_BLUE, Small_Font);
-    
-    Button fmt_btn[3];
-    for (int i = 0; i < 3; i++) {
-        int left = minus_btn_x + (plus_btn_x + btn_side - small_side - minus_btn_x) / 3 * i;
-        fmt_btn[i] = make_button(get_rect(left, 540, small_side, small_side), small_thickness, DARK_WHITE, PNG_BTN + i);
-    }
-
-    Toggler png_toggler, bmp_toggler, jpg_toggler;
-    png_toggler = make_toggler(fmt_btn[0], 0, "png", DARK_BLUE, Small_Font);
-    bmp_toggler = make_toggler(fmt_btn[1], 0, "bmp", DARK_BLUE, Small_Font);
-    jpg_toggler = make_toggler(fmt_btn[2], 0, "jpg", DARK_BLUE, Small_Font);
-
-    Button save_btn = make_button({minus_btn_x, 650, plus_btn_x + btn_side, 650 + btn_side / 2 * 3}, 5, DARK_BLUE, SAVE_BTN);
+    Button save_btn = make_button({450, 425, 600, 425 + btn_side / 2 * 3}, 5, DARK_BLUE, SAVE_BTN);
 
     Button *all_buttons[100];
     int btn_length = 0;
@@ -1277,48 +1149,33 @@ int main(void) {
     all_buttons[btn_length++] = &result_image_btn;
     all_buttons[btn_length++] = &save_btn;
 
-    Toggler *all_togglers[100];
-    int tgl_length = 0;
-
-    all_togglers[tgl_length++] = &inverse_toggler;
-    all_togglers[tgl_length++] = &by_color_toggler;
-    all_togglers[tgl_length++] = &hard_max_toggler;
-    all_togglers[tgl_length++] = &png_toggler;
-    all_togglers[tgl_length++] = &bmp_toggler;
-    all_togglers[tgl_length++] = &jpg_toggler;
-
-    UpDown_Counter *all_updown_counters[100];
-    int udc_length = 0;
-
-    all_updown_counters[udc_length++] = &radius_counter;
-    all_updown_counters[udc_length++] = &xcaps_counter;
-    all_updown_counters[udc_length++] = &ycaps_counter;
-    all_updown_counters[udc_length++] = &scale_counter;
-    
     while (true) {
         // Handle Messages
         auto result = handle_window_messages();
         if (result == -1) return 0;
 
-        // Handle Inputs
-        if (mousewheel_counter != 0) {
-            if (v2_inside_rect(mousewheel_position, source_image_btn.rect)) {
-                source_zoom.zoom_level += (float) mousewheel_counter / 50.0;
-                source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1, 100);
-            }
-            if (v2_inside_rect(mousewheel_position, result_image_btn.rect)) {
-                result_zoom.zoom_level += (float) mousewheel_counter / 50.0;
-                result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1, 100);
-            }
-            mousewheel_counter = 0;
-        }
+        // Handle Inputs        
+        POINT p;
+        GetCursorPos(&p);
+        mouse_position = screen_to_window_position(p);
 
-        int pressed = button_pressed(all_buttons, btn_length, all_togglers, tgl_length, all_updown_counters, udc_length);
+        // Handle zooming in and out
+        if (v2_inside_rect(mouse_position, source_image_btn.rect)) {
+            source_zoom.zoom_level += (float) mousewheel_counter / 50.0;
+            source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1, 100);
+        }
+        if (v2_inside_rect(mouse_position, result_image_btn.rect)) {
+            result_zoom.zoom_level += (float) mousewheel_counter / 50.0;
+            result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1, 100);
+        }
+        mousewheel_counter = 0;
+
+        int pressed = button_pressed(all_buttons, btn_length);
         switch (pressed) {
             case -1: break;
             case SAVE_BTN: {
                 if (!result_bitmap.Memory) {
-                    report_error("Nothing to save", SAVING_RESULT);
+                    report_error("Nothing to save");
                     break;
                 }
 
@@ -1354,11 +1211,11 @@ int main(void) {
                 swap_red_and_blue_channels(&result_bitmap);
 
                 if (success) {
-                    clear_error(SAVING_RESULT);
                     save_counter++;
                     saved_changes = true;
+                    clear_error();
                 } else {
-                    report_error("Failed to save result", SAVING_RESULT);
+                    report_error("Failed to save result");
                 }                
             } break;
             case SOURCE_BTN: {
@@ -1381,9 +1238,9 @@ int main(void) {
                     reset_zoom(&source_zoom, &image);
 
                     save_counter = 1; // Todo: Not necessarily
-                    clear_error(LOADING_SOURCE);
+                    clear_error();
                 } else {
-                    report_error("Failed to open file", LOADING_SOURCE);
+                    report_error("Failed to open file");
                 }
 
             } break;
@@ -1393,61 +1250,12 @@ int main(void) {
                     result_bitmap = create_image(image, param);
                     reset_zoom(&result_zoom, &result_bitmap);
                     saved_changes = false;
-                    clear_error(COMPUTING_RESULT);
+                    clear_error();
                 } else {
-                    report_warning("Nothing to process", COMPUTING_RESULT);
+                    report_warning("Nothing to process");
                 }
             } break;
-            case RADIUS_PLUS: {
-                param.radius++;
-                compute_dimensions_from_radius(image, &param);
-            } break;
-            case RADIUS_MINUS: {
-                param.radius--;
-                if (param.radius == 0) param.radius = 1;
-                compute_dimensions_from_radius(image, &param);
-            } break;
-            case XCAPS_PLUS: {
-                param.x_caps++;
-                compute_dimensions_from_x_caps(image, &param);
-            } break;
-            case XCAPS_MINUS: {
-                param.x_caps--;
-                if (param.x_caps == 0) param.x_caps = 1;
-                compute_dimensions_from_x_caps(image, &param);
-            } break;
-            case YCAPS_PLUS: {
-                param.y_caps++;
-                compute_dimensions_from_y_caps(image, &param);
-            } break;
-            case YCAPS_MINUS: {
-                param.y_caps--;
-                if (param.y_caps == 0) param.y_caps = 1;
-                compute_dimensions_from_y_caps(image, &param);
-            } break;
-            case SCALE_PLUS: {
-                if (param.scale >= 2) param.scale += 0.5;
-                else                  param.scale += 0.1;
-            } break;
-            case SCALE_MINUS: {
-                if (param.scale >= 2.5) param.scale -= 0.5;
-                else                    param.scale -= 0.1;
-                if (param.scale <= 0.1) param.scale = 0.1;
-            } break;
-            case INVERSE_BTN:  param.inverse  = !param.inverse; break;
-            case BY_COLOR_BTN: param.by_color = !param.by_color; break;
-            case HARD_MAX_BTN: param.hard_max = !param.hard_max; break;
-            case PNG_BTN: {
-                param.save_as_png = !param.save_as_png;
-            } break;
-            case JPG_BTN: {
-                param.save_as_jpg = !param.save_as_jpg;
-            } break;
-            case BMP_BTN: {
-                param.save_as_bmp = !param.save_as_bmp;
-            } break;
         }
-        handled_press = true;
 
         // Render
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
@@ -1456,35 +1264,12 @@ int main(void) {
         for (int i = 0; i < btn_length; i++) {
             render_rectangle(all_buttons[i]->rect, all_buttons[i]->c, all_buttons[i]->side);
         }
-
-        // Todo: Find a way to do this better
-        png_toggler.toggled = param.save_as_png;
-        bmp_toggler.toggled = param.save_as_bmp;
-        jpg_toggler.toggled = param.save_as_jpg;
-        inverse_toggler.toggled  = param.inverse;
-        by_color_toggler.toggled = param.by_color;
-        hard_max_toggler.toggled = param.hard_max;
-
-        for (int i = 0; i < tgl_length; i++) {
-            render_toggler(*all_togglers[i]);
-        }
-
-        for (int i = 0; i < udc_length; i++) {
-            render_updown_counter(*all_updown_counters[i]);
-        }
         
         render_error();
-
-        render_text(param.radius,   Medium_Font, radius_value_rect, BLUE);
-        render_text(param.x_caps,   Medium_Font, xcaps_value_rect,  BLUE);
-        render_text(param.y_caps,   Medium_Font, ycaps_value_rect,  BLUE);
-        render_text(param.scale, 2, Medium_Font, scale_value_rect,  BLUE);
 
         char text[10];
         strncpy(text, "Save", 4);
         render_text(text, 4, Medium_Font, save_btn.rect, DARK_BLUE);
-        strncpy(text, "Source", 6);
-        render_text(text, 6, Big_Font, source_description_rect, DARK_BLUE);
         strncpy(text, "Processed", 9);
         render_text(text, 9, Big_Font, result_description_rect, DARK_BLUE);
 
@@ -1523,8 +1308,175 @@ int main(void) {
             render_bitmap_to_screen(&result_bitmap, rect_r, result_rect);
         }
 
+        Panel settings_panel = make_panel(425, 50, 30, 200, Small_Font);
+        settings_panel.add_title("Settings", BLUE);
+
+        settings_panel.row();
+        int radius_press = settings_panel.push_updown_counter("Radius", DARK_WHITE, DARK_BLUE, BLUE, UpDown_(param.radius));
+        param.radius = max(1, param.radius + radius_press);
+        if (radius_press != 0) compute_dimensions_from_radius(image, &param);
+        
+        settings_panel.row();
+        int x_caps_press = settings_panel.push_updown_counter("X Caps", DARK_WHITE, DARK_BLUE, BLUE, UpDown_(param.x_caps));
+        param.x_caps = max(1, param.x_caps + x_caps_press);
+        if (x_caps_press != 0) compute_dimensions_from_x_caps(image, &param);
+        
+        settings_panel.row();
+        int y_caps_press = settings_panel.push_updown_counter("Y Caps", DARK_WHITE, DARK_BLUE, BLUE, UpDown_(param.y_caps));
+        param.y_caps = max(1, param.y_caps + y_caps_press);
+        if (y_caps_press != 0) compute_dimensions_from_y_caps(image, &param);
+
+        settings_panel.row();
+        float scale_press = settings_panel.push_updown_counter("Scale", DARK_WHITE, DARK_BLUE, BLUE, UpDown_(param.scale), true);
+        if (param.scale >= 2) scale_press *= 0.5;
+        else                  scale_press *= 0.1;
+        param.scale = max(0.1, param.scale + scale_press);
+
+        settings_panel.row();
+        settings_panel.row(3);
+        settings_panel.push_button("png", DARK_WHITE, DARK_BLUE, &param.save_as_png);
+        settings_panel.push_button("bmp", DARK_WHITE, DARK_BLUE, &param.save_as_bmp);
+        settings_panel.push_button("jpg", DARK_WHITE, DARK_BLUE, &param.save_as_jpg);
+
+        settings_panel.row();
+        settings_panel.push_button("Inverse", DARK_WHITE, DARK_BLUE, &param.inverse);
+        
+        settings_panel.row();
+        settings_panel.push_button("By Color", DARK_WHITE, DARK_BLUE, &param.by_color);
+        if (param.by_color) {
+            settings_panel.row();
+            settings_panel.push_button("Hard Max", DARK_WHITE, DARK_BLUE, &param.hard_max);
+        }
+
+        int slider_order = 0;
+        settings_panel.row();
+        settings_panel.push_slider("Brightness", DARK_WHITE, DARK_BLUE, DARK_BLUE, &param.brightness, 1, 99, ++slider_order);
+        settings_panel.row();
+        settings_panel.push_slider("Contrast", DARK_WHITE, DARK_BLUE, DARK_BLUE, &param.contrast, 1, 99, ++slider_order);
+        
+        Panel source_panel = make_panel(50, 550, 40, 350, Medium_Font);
+        source_panel.add_title("Settings", BLUE);
+
+        source_panel.row();
+        source_panel.push_slider("Brightness", DARK_WHITE, DARK_BLUE, DARK_BLUE, &param.source_brightness, 1, 99, ++slider_order);
+        source_panel.row();
+        source_panel.push_slider("Contrast", DARK_WHITE, DARK_BLUE, DARK_BLUE, &param.source_contrast, 1, 99, ++slider_order);
+
+        handled_press = true;
         blit_main_buffer_to_window();
 
         Sleep(10);
     }
+}
+
+void Panel::row(int columns) {
+    at_y += row_height;
+    at_x = left_x;
+    column_width = width / columns;
+}
+
+void Panel::push_button(char *name, Color button_color, Color text_color, bool *toggled) {
+    int thickness   = 2;
+    int rect_side   = row_height - 2 * thickness;
+    int inside_side = row_height - 6 * thickness;
+
+    RECT button_rect = get_rect(at_x + thickness,     at_y + thickness,     rect_side, rect_side);
+    RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
+
+    render_rectangle(button_rect, button_color, thickness);
+    if (*toggled) render_filled_rectangle(inside_rect, button_color);
+
+    int name_length = strlen(name);
+    int name_width = min(column_width - rect_side, (name_length + 2) * (Font.advance * Font.scale[font_size]));
+
+    RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
+    render_text(name, name_length, font_size, name_rect, text_color);
+
+    at_x += column_width;
+
+    if (!left_button_down || handled_press) return;
+
+    if (v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect)) *toggled = !(*toggled);
+    return;
+}
+
+int Panel::push_updown_counter(char *name, Color button_color, Color text_color, Color value_color, void *value, bool is_float) {
+    int thickness = 2;
+    int rect_side = row_height - 2 * thickness;
+
+    int name_length = strlen(name);
+
+    RECT minus_rect = get_rect(at_x + thickness, at_y + thickness, rect_side,     rect_side);
+    RECT value_rect = get_rect(minus_rect.right, at_y,             rect_side * 3, rect_side);
+    RECT plus_rect  = get_rect(value_rect.right, at_y + thickness, rect_side,     rect_side);
+    RECT name_rect  = get_rect(plus_rect.right,  at_y, (Font.advance * Font.scale[font_size]) * (name_length + 2), rect_side);
+
+    render_rectangle(minus_rect, button_color, thickness);
+    render_rectangle(plus_rect,  button_color, thickness);
+
+    char text[2] = "+";
+    render_text(text, 1, font_size, plus_rect,  button_color);
+    text[0] = '-';
+    render_text(text, 1, font_size, minus_rect, button_color);
+
+    render_text(name, name_length, font_size, name_rect, text_color);
+
+    if (is_float) render_text(*(float *)value, 2, font_size, value_rect, value_color);
+    else          render_text(*(int *)value, font_size, value_rect, value_color);
+
+    at_x += column_width;
+
+    if (!left_button_down || handled_press) return 0;
+
+    if (v2_inside_rect(mouse_position, minus_rect)) return -1;
+    if (v2_inside_rect(mouse_position, plus_rect))  return +1;
+
+    return 0;
+}
+
+void Panel::add_title(char *title, Color c) {
+    RECT title_rect = get_rect(at_x, at_y, width, row_height);
+    render_text(title, strlen(title), clamp(font_size + 1, 0, N_SIZES - 1), title_rect, c);
+
+    at_y += 0.5 * row_height;
+}
+
+void Panel::push_slider(char *text, Color slider_color, Color text_color, Color value_color, int *value, int min_v, int max_v, int slider_order) {
+    int text_length = strlen(text);
+
+    RECT rect = get_rect(at_x, at_y, column_width, row_height);
+    RECT slider_rect = {rect.left, rect.top, rect.right - (Font.advance * Font.scale[Small_Font]) * (text_length + 1), rect.bottom};
+    RECT text_rect   = {slider_rect.right, rect.top, rect.right, rect.bottom};
+
+    int  thickness   = 2;
+    int  slider_side = get_h(slider_rect) - thickness * 2;
+    RECT line_rect = get_rect(slider_rect.left, (slider_rect.top + slider_rect.bottom - thickness) / 2, get_w(slider_rect), thickness);
+
+    float pos = (float) (*value - min_v) / (float) (max_v - min_v);
+    int slider_position = slider_rect.left + (get_w(slider_rect) - slider_side) * pos;
+    RECT pos_rect = get_rect(slider_position, slider_rect.top + thickness, slider_side, slider_side);
+
+    render_filled_rectangle(line_rect, slider_color);
+    render_filled_rectangle(pos_rect,  slider_color);
+    render_text(text, text_length, Small_Font, text_rect, text_color);
+    
+    if (!left_button_down) sliders.pressing_a_slider = false;
+    else if (sliders.pressing_a_slider) {
+        if (sliders.which_slider_is_pressed == slider_order) {
+            float new_pos = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
+            new_pos = clamp(new_pos, 0, 1);
+            *value = min_v + new_pos * (max_v - min_v);
+        }
+    } else if (v2_inside_rect(mouse_position, slider_rect)) {
+        sliders.pressing_a_slider = true;
+        sliders.which_slider_is_pressed = slider_order;
+        float new_pos = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
+        new_pos = clamp(new_pos, 0, 1);
+        *value = min_v + new_pos * (max_v - min_v);
+    } else if (v2_inside_rect(mouse_position, text_rect)) {
+        *value = (max_v + min_v) / 2;
+    }
+
+    render_text(*value, Small_Font, pos_rect, value_color);
+    return;
 }

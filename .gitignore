@@ -1,5 +1,5 @@
 $ cat .gitignore
-*.exe
 *.jpg
 *.bmp
 *.png
+*.gif

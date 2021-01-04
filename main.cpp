@@ -1146,6 +1146,7 @@ int main(void) {
 
     Conversion_Parameters param;
     Zoom_Parameters source_zoom, result_zoom;
+    RECT source_zoom_rect, processed_zoom_rect;
 
     while (true) {
         // Handle Messages
@@ -1184,6 +1185,11 @@ int main(void) {
 
                 compute_dimensions_from_radius(image, &param);
                 reset_zoom(&source_zoom, &image);
+                
+                // temp
+                source_zoom.zoom_level = max(image.Width / get_w(source_rect), image.Height / get_h(source_rect));
+                float zoom = source_zoom.zoom_level;
+                source_zoom_rect = get_rect(0, 0, get_w(source_rect) * zoom, get_h(source_rect) * zoom);
 
                 save_counter = 1; // Todo: Not necessarily
                 clear_error();
@@ -1202,6 +1208,11 @@ int main(void) {
                 result_bitmap = create_image(image, param);
                 reset_zoom(&result_zoom, &result_bitmap);
 
+                // temp
+                result_zoom.zoom_level = max(image.Width / get_w(processed_rect), image.Height / get_h(processed_rect));
+                float zoom = result_zoom.zoom_level;
+                processed_zoom_rect = get_rect(0, 0, get_w(processed_rect) * zoom, get_h(processed_rect) * zoom);
+
                 saved_changes = false;
                 clear_error();
             } else {
@@ -1209,18 +1220,26 @@ int main(void) {
             }
         }
 
-        if (source_button_result == BUTTON_HOVERED) {
-            source_zoom.zoom_level += (float) mousewheel_counter / 50.0;
-            source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1, 100);
+        if (mousewheel_counter != 0) {
+            if (source_button_result == BUTTON_HOVERED) {
+                source_zoom.zoom_level += 1.0 / (2.0 * (float) mousewheel_counter);
+                source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1.0 / 500.0, 100);
+
+                float zoom = source_zoom.zoom_level;
+                source_zoom_rect = get_rect(0, 0, get_w(source_rect) * zoom, get_h(source_rect) * zoom);
+            }
+            if (processed_button_result == BUTTON_HOVERED) {
+                result_zoom.zoom_level += 1.0 / (2.0 * (float) mousewheel_counter);
+                result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1.0 / 500.0, 100);
+
+                float zoom = result_zoom.zoom_level;
+                processed_zoom_rect = get_rect(0, 0, get_w(processed_rect) * zoom, get_h(processed_rect) * zoom);
+            }
+            mousewheel_counter = 0;
         }
-        if (processed_button_result == BUTTON_HOVERED) {
-            result_zoom.zoom_level += (float) mousewheel_counter / 50.0;
-            result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1, 100);
-        }
-        mousewheel_counter = 0;
 
         save_palette.background_color = saved_changes ? BLACK : WHITE;
-        int save_result = push_button({450, 425, 600, 425 + 75}, 5, save_palette, "Save", Medium_Font);
+        int save_result = push_button({450, 425, 600, 425 + 75}, 3, save_palette, "Save", Medium_Font);
         if (save_result == BUTTON_PRESSED) {
             if (!result_bitmap.Memory) {
                 report_error("Nothing to save");
@@ -1270,37 +1289,13 @@ int main(void) {
         render_error();
 
         if (image.Memory) {
-            // RECT rect_s = compute_rendering_position(source_image_btn.rect, source_image_btn.side, image.Width, image.Height);
-            // RECT source_rect = get_rect(0, 0, image.Width, image.Height);
-
-            // source_rect.left   += (1.0 - 1.0 / source_zoom.zoom_level) * image.Width  / 2.0;
-            // source_rect.right  -= (1.0 - 1.0 / source_zoom.zoom_level) * image.Width  / 2.0;
-            // source_rect.top    += (1.0 - 1.0 / source_zoom.zoom_level) * image.Height / 2.0;
-            // source_rect.bottom -= (1.0 - 1.0 / source_zoom.zoom_level) * image.Height / 2.0;
-
-            // source_rect.left   += source_zoom.center_x - image.Width  / 2.0;
-            // source_rect.right  += source_zoom.center_x - image.Width  / 2.0;
-            // source_rect.top    += source_zoom.center_y - image.Height / 2.0;
-            // source_rect.bottom += source_zoom.center_y - image.Height / 2.0;
-            render_bitmap_to_screen(&image, source_rect, get_rect(0, 0, get_w(source_rect), get_h(source_rect)));
+            RECT render_rect = {source_rect.left + 5, source_rect.top + 5, source_rect.right - 5, source_rect.bottom - 5};
+            render_bitmap_to_screen(&image, render_rect, source_zoom_rect);
         }
 
         if (result_bitmap.Memory) {
-            render_bitmap_to_screen(&result_bitmap, processed_rect, get_rect(0, 0, get_w(processed_rect), get_h(processed_rect)));
-        //     RECT rect_r = compute_rendering_position(result_image_btn.rect, result_image_btn.side, result_bitmap.Width, result_bitmap.Height);
-        //     RECT result_rect = get_rect(0, 0, result_bitmap.Width, result_bitmap.Height);
-            
-        //     result_rect.left   += (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Width  / 2.0;
-        //     result_rect.right  -= (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Width  / 2.0;
-        //     result_rect.top    += (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Height / 2.0;
-        //     result_rect.bottom -= (1.0 - 1.0 / result_zoom.zoom_level) * result_bitmap.Height / 2.0;
-
-        //     result_rect.left   += result_zoom.center_x - result_bitmap.Width  / 2.0;
-        //     result_rect.right  += result_zoom.center_x - result_bitmap.Width  / 2.0;
-        //     result_rect.top    += result_zoom.center_y - result_bitmap.Height / 2.0;
-        //     result_rect.bottom += result_zoom.center_y - result_bitmap.Height / 2.0;
-
-            // render_bitmap_to_screen(&result_bitmap, rect_r, result_rect);
+            RECT render_rect = {processed_rect.left + 5, processed_rect.top + 5, processed_rect.right - 5, processed_rect.bottom - 5};
+            render_bitmap_to_screen(&result_bitmap, render_rect, processed_zoom_rect);
         }
 
         Panel settings_panel = make_panel(425, 50, 30, 200, Small_Font);

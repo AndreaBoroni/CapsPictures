@@ -63,11 +63,6 @@ BITMAPINFO Main_Info = {0};
 
 HWND Window = {0};
 
-// uint32 key_presses[100]  = {0};
-// uint32 key_releases[100] = {0};
-// int8 key_presses_length  = 0;
-// int8 key_releases_length = 0;
-
 bool left_button_down    = false;
 bool right_button_down   = false;
 
@@ -303,11 +298,6 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
         case WM_CLOSE: {
             PostQuitMessage(0);
         } break;
-        // case WM_SYSKEYUP:
-        // case WM_SYSKEYDOWN:
-        // case WM_KEYDOWN:
-        // case WM_KEYUP: {
-        // } break;
         case WM_LBUTTONDOWN:
             left_button_down   = true;
             handled_press_left = false;
@@ -438,60 +428,6 @@ void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width
 
     int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
     uint8 *Row     = (uint8 *)  Dest->Memory;
-    uint32 *Texels = (uint32 *) Source->Memory;
-    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
-
-    float width_scale  = (float) Source->Width  / (float) width;
-    float height_scale = (float) Source->Height / (float) height;
-
-    for (int Y = starting_y; Y < ending_y; Y++) {        
-        uint32 *Pixel = (uint32 *)Row;
-        y_bitmap = (Y - y) * height_scale;
-        for (int X = starting_x; X < ending_x; X++) {
-            x_bitmap = (X - x) * width_scale;
-            uint32 source_pixel = Texels[x_bitmap + y_bitmap * Source->Width];
-
-            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
-            uint8 SR =  (source_pixel >> 16) & 0xff;
-            uint8 SG =  (source_pixel >>  8) & 0xff;
-            uint8 SB =  (source_pixel >>  0) & 0xff;
-
-            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
-            uint8 DR =  (*Pixel >> 16) & 0xff;
-            uint8 DG =  (*Pixel >>  8) & 0xff;
-            uint8 DB =  (*Pixel >>  0) & 0xff;
-
-            uint8 A = 255 * (SA + DA - SA*DA);
-            uint8 R = DR * (1 - SA) + SR;
-            uint8 G = DG * (1 - SA) + SG;
-            uint8 B = DB * (1 - SA) + SB;
-
-            *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
-            Pixel++;
-        }
-        Row += Dest_Pitch;
-    }
-}
-
-void render_bitmap_to_screen(bitmap *Source, int x, int y, int width, int height) {
-
-    if (width  < 0) width  = Source->Width;
-    if (height < 0) height = Source->Height;
-
-    int starting_x = MAX(x, 0);
-    int starting_y = MAX(y, 0);
-    int ending_x   = MIN(x + width,  Main_Buffer.Width);
-    int ending_y   = MIN(y + height, Main_Buffer.Height);
-    
-    if (starting_x > Main_Buffer.Width)  return;
-    if (starting_y > Main_Buffer.Height) return;
-    if (ending_x < 0) return;
-    if (ending_y < 0) return;
-
-    int x_bitmap, y_bitmap;
-
-    int Dest_Pitch = Main_Buffer.Width * Bytes_Per_Pixel;
-    uint8 *Row     = (uint8 *)  Main_Buffer.Memory;
     uint32 *Texels = (uint32 *) Source->Memory;
     Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
 
@@ -710,11 +646,10 @@ int *compute_indexes(bitmap image, v2 *centers, Conversion_Parameters param) {
 
     for (int i = 0; i < number_of_centers; i++) {
         auto gray_value = compute_color_average(image, centers[i].x, centers[i].y, param.radius);
+        gray_value = clamp(gray_value, 0, 255.0);
         indexes[i] = (gray_value / 255.0) * (Total_Caps - 1);
         
-        assert(gray_value >= 0);
-        assert(indexes[i] >= 0);
-        assert(indexes[i] < Total_Caps);
+        indexes[i] = clamp(indexes[i], 0, Total_Caps - 1);
 
         if (indexes[i] > max_index) max_index = indexes[i];
         if (indexes[i] < min_index) min_index = indexes[i];
@@ -786,6 +721,7 @@ void compute_dimensions_from_radius(bitmap image, Conversion_Parameters *param) 
 void compute_dimensions_from_x_caps(bitmap image, Conversion_Parameters *param) {  
     if (param->x_caps <= 0) param->x_caps = 1;
     param->radius = (float) image.Width / (float) (param->x_caps * 2);
+
     if (param->radius <= 0) param->radius = 1;
     param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
 }
@@ -793,6 +729,7 @@ void compute_dimensions_from_x_caps(bitmap image, Conversion_Parameters *param) 
 void compute_dimensions_from_y_caps(bitmap image, Conversion_Parameters *param) {
     if (param->y_caps <= 0) param->y_caps = 1;
     param->radius = (float) image.Width / (float) (param->y_caps * SQRT_2);
+
     if (param->radius <= 0) param->radius = 1;
     param->x_caps = (float) image.Height / (float) (2 * param->radius) + 1;
 }
@@ -859,15 +796,14 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
     if (use_original_as_source) source = (uint32 *) image.Original;
 
     for (int p = 0; p < image.Width * image.Height; p++) {
-        uint8 A = ((source[p] >> 24) & 0xff);
-        uint32 R = clamp((int) ((source[p] >> 16) & 0xff) + b, 0, 255);
-        uint32 G = clamp((int) ((source[p] >>  8) & 0xff) + b, 0, 255);
-        uint32 B = clamp((int) ((source[p] >>  0) & 0xff) + b, 0, 255);
+        uint8 A = (source[p] >> 24);
+        uint8 R = clamp((int) ((source[p] >> 16) & 0xff) + b, 0, 255);
+        uint8 G = clamp((int) ((source[p] >>  8) & 0xff) + b, 0, 255);
+        uint8 B = clamp((int) ((source[p] >>  0) & 0xff) + b, 0, 255);
         
-        dest[p] = (A << 24) | ((uint8) R << 16) | ((uint8) G << 8) | ((uint8) B << 0);
+        dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
 }
-
 
 void apply_contrast(bitmap image, int contrast, bool use_original_as_source = false) {
     if (contrast == 50 && !use_original_as_source) return;
@@ -881,15 +817,16 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
     if (use_original_as_source) source = (uint32 *) image.Original;
 
     for (int p = 0; p < image.Width * image.Height; p++) {
-        uint8 A = ((source[p] >> 24) & 0xff);
         int R_pre = (source[p] >> 16) & 0xff;
         int G_pre = (source[p] >>  8) & 0xff;
         int B_pre = (source[p] >>  0) & 0xff;
-        uint32 R = clamp(f * (R_pre - 128) + 128, 0, 255);
-        uint32 G = clamp(f * (G_pre - 128) + 128, 0, 255);
-        uint32 B = clamp(f * (B_pre - 128) + 128, 0, 255);
+
+        uint8 A = ((source[p] >> 24) & 0xff);
+        uint8 R = clamp(f * (R_pre - 128) + 128, 0, 255);
+        uint8 G = clamp(f * (G_pre - 128) + 128, 0, 255);
+        uint8 B = clamp(f * (B_pre - 128) + 128, 0, 255);
         
-        dest[p] = (A << 24) | ((uint8) R << 16) | ((uint8) G << 8) | ((uint8) B << 0);
+        dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
 
 }
@@ -937,8 +874,8 @@ bitmap create_image(bitmap image, Conversion_Parameters param) {
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-    apply_contrast(result_bitmap, param.result_contrast);
-    apply_brightness(result_bitmap, param.result_contrast);
+    apply_brightness(result_bitmap, param.result_brightness);
+    apply_contrast(result_bitmap,   param.result_contrast);
 
     free(centers);
     free(indexes);
@@ -997,6 +934,7 @@ int push_button(RECT rect, int side, Color_Palette palette, char *text = "", int
     return Button_not_Pressed_nor_Hovered;
 }
 
+// This needs some dll
 bool open_file_externally(char *file_name, int size_file_name) {
     OPENFILENAME dialog_arguments;
 
@@ -1033,7 +971,9 @@ int get_dot_index(char *file_name, int file_name_size) {
 
 struct Panel {
     int left_x = 0;
-    int width  = 0;
+
+    int base_width  = 0;
+    int base_height = 0;
 
     int row_height   = 0;
     int column_width = 0;
@@ -1043,22 +983,25 @@ struct Panel {
 
     int font_size = Small_Font;
 
-    void row(int columns = 1);
+    void row(int columns = 1, float height_factor = 1);
     void push_toggler(char *name, Color_Palette palette, bool *toggled);
     int  push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float = false);
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
+    bool push_button(char *text, Color_Palette palette);
     void add_title(char *title, Color c);
 };
 
-Panel make_panel(int x, int y, int row_height, int width, int font_size) {
+Panel make_panel(int x, int y, int height, int width, int font_size) {
     Panel result;
 
     result.left_x = x;
     result.at_x   = x;
     result.at_y   = y;
 
-    result.width = width;
-    result.row_height = row_height;
+    result.base_width  = width;
+    result.base_height = height;
+
+    result.row_height = height;
 
     result.font_size = font_size;
     return result;
@@ -1181,8 +1124,8 @@ int main(void) {
 
             if (image.Memory && success) {
                 adjust_bpp(&image, Bpp);
-                // swap_red_and_blue_channels(&image);
                 premultiply_alpha(&image);
+                // swap_red_and_blue_channels(&image);
 
                 if (image.Original) free(image.Original);
                 image.Original = (uint8 *) malloc(image.Width * image.Height * Bytes_Per_Pixel);
@@ -1192,6 +1135,9 @@ int main(void) {
 
                 source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
                 compute_dimensions_from_radius(image, &param);
+
+                apply_brightness(image, param.source_brightness);
+                apply_contrast(image,   param.source_contrast);
                 
                 save_counter = 1; // Todo: Not necessarily, find out which one it is
             }
@@ -1284,13 +1230,9 @@ int main(void) {
         settings_panel.row();
         settings_panel.push_toggler("Random Centers", default_palette, &param.random_centers);
 
-        settings_panel.row();
-        RECT save_rect = {450, settings_panel.at_y, 600, settings_panel.at_y + 75};
-
+        settings_panel.row(1, 2);
         save_palette.background_color = saved_changes ? BLACK : WHITE;
-        int save_result = push_button(save_rect, 3, save_palette, "Save", Medium_Font);
-        if (save_result == Button_Left_Clicked) {
-            if (!result_bitmap.Memory) break;
+        if (settings_panel.push_button("Save", save_palette) && result_bitmap.Memory) {
 
             int dot_index = get_dot_index(file_name, file_name_size);
             assert(dot_index >= 0);
@@ -1352,7 +1294,7 @@ int main(void) {
         if (r_change) {
             apply_brightness(result_bitmap, param.result_brightness, true);
             apply_contrast(result_bitmap, param.result_contrast);
-            saved_changes = false;
+            if (result_bitmap.Memory) saved_changes = false;
         }
 
         handled_press_left  = true;
@@ -1366,10 +1308,13 @@ int main(void) {
     }
 }
 
-void Panel::row(int columns) {
+void Panel::row(int columns, float height_factor) {
     at_y += row_height;
     at_x = left_x;
-    column_width = width / columns;
+
+    // First you advance the at_y with the previous row_height
+    row_height = base_height * height_factor;
+    column_width = base_width / columns;
 }
 
 void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
@@ -1442,10 +1387,27 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 }
 
 void Panel::add_title(char *title, Color c) {
-    RECT title_rect = get_rect(at_x, at_y, width, row_height);
+    RECT title_rect = get_rect(at_x, at_y, base_width, base_height);
     render_text(title, strlen(title), clamp(font_size + 1, 0, N_SIZES - 1), title_rect, c);
 
     at_y += 0.5 * row_height;
+}
+
+bool Panel::push_button(char *text, Color_Palette palette) {
+    int text_length  = strlen(text);
+    int thickness = 2;
+
+    RECT button_rect = get_rect(at_x, at_y, column_width, row_height);
+    bool highlighted = v2_inside_rect(mouse_position, button_rect);
+
+    Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
+    Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
+
+    render_filled_rectangle(button_rect, palette.background_color);
+    render_rectangle(button_rect, button_color, thickness);
+    render_text(text, text_length, Small_Font, button_rect, text_color);
+
+    return highlighted && left_button_down && !handled_press_left;
 }
 
 bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order) {
@@ -1455,10 +1417,6 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     RECT slider_rect = get_rect(at_x,                    at_y, column_width / 2, row_height);
     RECT text_rect   = get_rect(at_x + column_width / 2, at_y, column_width / 2, row_height);
     
-    // RECT rect = get_rect(at_x, at_y, column_width, row_height);
-    // RECT slider_rect = {rect.left, rect.top, rect.right - (Font.advance * Font.scale[Small_Font]) * (text_length + 1), rect.bottom};
-    // RECT text_rect   = {slider_rect.right, rect.top, rect.right, rect.bottom};
-
     int  thickness   = 2;
     int  slider_side = get_h(slider_rect) - thickness * 2;
     RECT line_rect = get_rect(slider_rect.left, (slider_rect.top + slider_rect.bottom - thickness) / 2, get_w(slider_rect), thickness);

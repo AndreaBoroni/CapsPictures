@@ -40,40 +40,27 @@
         "fstream": "cpp"
     },
 
-    // OPTIONAL WORD WRAPPING
-    // Controls if lines should wrap. The lines will wrap at min(editor.wrappingColumn, viewportWidthInColumns).
-    "editor.wordWrap": "off",
-    
-    // Controls the indentation of wrapped lines. Can be one of 'none', 'same' or 'indent'.
+    "editor.wordWrap"      : "on",
     "editor.wrappingIndent": "none",
 
-    // TURN OFF AUTOCOMPLETION
-    // Controls if quick suggestions should show up or not while typing
-    "editor.quickSuggestions": false,
-
-    // Enables parameter hints
-    "editor.parameterHints": false,
-
-    // Controls if the editor should automatically close brackets after opening them
-    "editor.autoClosingBrackets": false,
-
-    // Controls if the editor should automatically format the line after typing
+    "editor.autoClosingBrackets": "never",
     "editor.formatOnType": false,
-
-    // Controls if suggestions should automatically show up when typing trigger characters
+    "editor.quickSuggestions": false,
     "editor.suggestOnTriggerCharacters": false,
 
-    "breadcrumbs.enabled": false,
-    // "editor.glyphMargin": false,
-    "editor.folding": false,
+    "editor.acceptSuggestionOnEnter": "on",
 
-    // Controls if suggestions should be accepted 'Enter' - in addition to 'Tab'.
-    // Helps to avoid ambiguity between inserting new lines or accepting suggestions.
-    "editor.acceptSuggestionOnEnter": "off",
+    "breadcrumbs.enabled": false,
+    "editor.glyphMargin": true, // I need this on for breakpoints
+    "editor.folding": false,
     "editor.lineNumbers": "off",
+    
+    "C_Cpp.errorSquiggles": "Disabled",
+
     "workbench.colorCustomizations": {
         "editor.background": "#042327"
     },
+
     "editor.tokenColorCustomizations": {
         "comments": "#31B72C",
         "keywords": "#FFFFFF",
@@ -112,7 +99,7 @@
             {
                 "name": "Placeholder",
                 "scope": [
-                    "constant.other.placeholder"
+                    "constant.other.placeholder.cpp"
                 ],
                 "settings": {
                     "foreground": "#2cc198"
@@ -176,6 +163,5 @@
                 }
             },
         ]
-    },
-    "python.pythonPath": "C:\\Python38\\python.exe"
+    }
 }

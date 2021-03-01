@@ -1,10 +1,11 @@
 #include <windows.h>
 #include <string>
+#include <stdlib.h>
+
 using namespace std;
 
 /* Todo list:
     - Optimize
-    - Don't draw text outside the window
     - Make button to swap red and blue
     - Save with the correct number
     - Clean up buttons generation
@@ -26,6 +27,10 @@ UI:
 
 #define get_time(t)  QueryPerformanceCounter((t));
 #define time_elapsed(t0, t1, CPM) ((t1).QuadPart - (t0).QuadPart) / (CPM);
+
+#define MAX(a, b) (((a) > (b)) ? (a) : (b));
+#define MIN(a, b) (((a) < (b)) ? (a) : (b));
+#define clamp(a, b, c) (((a) > (c)) ? (c) : (((a) < (b)) ? (b) : (a)))
 
 typedef unsigned char      uint8;
 typedef unsigned short     uint16;
@@ -62,16 +67,18 @@ HWND Window = {0};
 // uint32 key_releases[100] = {0};
 // int8 key_presses_length  = 0;
 // int8 key_releases_length = 0;
+
 bool left_button_down    = false;
 bool right_button_down   = false;
 
 int mousewheel_counter = 0;
 v2  mouse_position     = {0};
 
-bool handled_press = false;
+bool handled_press_left  = false;
+bool handled_press_right = false;
 bool changed_size = false;
 
-#define Total_Caps 121 // Don't know why only 99 load
+#define Total_Caps 121
 bitmap caps_data[Total_Caps];
 
 #define FIRST_CHAR_SAVED 32
@@ -177,8 +184,13 @@ void render_text(char *text, int length, int font_type, RECT dest_rect, Color c 
         
         uint32 *Dest   = (uint32 *) Main_Buffer.Memory + (uint32) (Main_Buffer.Width * quad.y0 + quad.x0);
         uint8  *Source = Font.spc[font_type].pixels + (uint32) (Packed_Font_W * quad.t0 + quad.s0);
-        for (y = 0; y < quad.y1 - quad.y0; y++) {
-            for (x = 0; x < quad.x1 - quad.x0; x++) {
+
+        int max_x = MIN(xpos + quad.x1 - quad.x0, Main_Buffer.Width);
+        int max_y = MIN(ypos + quad.y1 - quad.y0, Main_Buffer.Height);
+
+        int skipped_horizontal_pixels = (xpos + quad.x1 - quad.x0) - max_x;
+        for (y = ypos; y < max_y; y++) {
+            for (x = xpos; x < max_x; x++) {
                 float SA = *Source / 255.0;
                 uint8 SR = c.R * SA;
                 uint8 SG = c.G * SA;
@@ -198,8 +210,8 @@ void render_text(char *text, int length, int font_type, RECT dest_rect, Color c 
                 Source++;
                 Dest++;
             }
-            Source += (uint32) (Packed_Font_W     - (quad.s1 - quad.s0));
-            Dest   += (uint32) (Main_Buffer.Width - (quad.x1 - quad.x0));
+            Source += (uint32) (Packed_Font_W     - (quad.s1 - quad.s0) + skipped_horizontal_pixels);
+            Dest   += (uint32) (Main_Buffer.Width - (max_x - xpos));
         }
 
         xpos = ceil(xpos);
@@ -297,15 +309,21 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
         // case WM_KEYUP: {
         // } break;
         case WM_LBUTTONDOWN:
-            left_button_down = true;
-            handled_press    = false;
+            left_button_down   = true;
+            handled_press_left = false;
             break;
         case WM_LBUTTONUP:
-            left_button_down = false;
-            handled_press    = true;
+            left_button_down   = false;
+            handled_press_left = true;
             break;
-        case WM_RBUTTONDOWN: right_button_down = true;  break;
-        case WM_RBUTTONUP:   right_button_down = false; break;
+        case WM_RBUTTONDOWN:
+            right_button_down   = true;
+            handled_press_right = false;
+            break;
+        case WM_RBUTTONUP:
+            right_button_down   = false;
+            handled_press_right = true;
+            break;
         case WM_MOUSEWHEEL: {
             auto key_state = GET_KEYSTATE_WPARAM(WParam);
             auto delta     = GET_WHEEL_DELTA_WPARAM(WParam);
@@ -347,8 +365,7 @@ void start_main_window()
 
 int handle_window_messages() {
     MSG Message;
-    while (PeekMessage(&Message, 0, 0, 0, PM_REMOVE))
-    {
+    while (PeekMessage(&Message, 0, 0, 0, PM_REMOVE)) {
         TranslateMessage(&Message);
         DispatchMessage(&Message);
         if (Message.message == WM_QUIT) return -1;
@@ -356,17 +373,14 @@ int handle_window_messages() {
     return 0;
 }
 
-#define max(a,b) (((a) > (b)) ? (a) : (b));
-#define min(a,b) (((a) < (b)) ? (a) : (b));
-
 void render_filled_rectangle(RECT rectangle, Color color)
 {
     uint32 c = (color.A << 24) | (color.R << 16) | (color.G << 8) | color.B;
     
-    int starting_x = max(rectangle.left,   0);
-    int starting_y = max(rectangle.top,    0);
-    int ending_x   = min(rectangle.right,  Main_Buffer.Width);
-    int ending_y   = min(rectangle.bottom, Main_Buffer.Height);
+    int starting_x = MAX(rectangle.left,   0);
+    int starting_y = MAX(rectangle.top,    0);
+    int ending_x   = MIN(rectangle.right,  Main_Buffer.Width);
+    int ending_y   = MIN(rectangle.bottom, Main_Buffer.Height);
     
     if (starting_x > Main_Buffer.Width)  return;
     if (starting_y > Main_Buffer.Height) return;
@@ -410,10 +424,10 @@ void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width
     if (width  < 0) width  = Source->Width;
     if (height < 0) height = Source->Height;
 
-    int starting_x = max(x, 0);
-    int starting_y = max(y, 0);
-    int ending_x   = min(x + width,  Dest->Width);
-    int ending_y   = min(y + height, Dest->Height);
+    int starting_x = MAX(x, 0);
+    int starting_y = MAX(y, 0);
+    int ending_x   = MIN(x + width,  Dest->Width);
+    int ending_y   = MIN(y + height, Dest->Height);
     
     if (starting_x > Dest->Width)  return;
     if (starting_y > Dest->Height) return;
@@ -464,10 +478,10 @@ void render_bitmap_to_screen(bitmap *Source, int x, int y, int width, int height
     if (width  < 0) width  = Source->Width;
     if (height < 0) height = Source->Height;
 
-    int starting_x = max(x, 0);
-    int starting_y = max(y, 0);
-    int ending_x   = min(x + width,  Main_Buffer.Width);
-    int ending_y   = min(y + height, Main_Buffer.Height);
+    int starting_x = MAX(x, 0);
+    int starting_y = MAX(y, 0);
+    int ending_x   = MIN(x + width,  Main_Buffer.Width);
+    int ending_y   = MIN(y + height, Main_Buffer.Height);
     
     if (starting_x > Main_Buffer.Width)  return;
     if (starting_y > Main_Buffer.Height) return;
@@ -517,10 +531,10 @@ int get_w(RECT rect) { return rect.right - rect.left; }
 int get_h(RECT rect) { return rect.bottom - rect.top; }
 
 void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
-    int starting_x = max(dest_rect.left, 0);
-    int starting_y = max(dest_rect.top,  0);
-    int ending_x   = min(dest_rect.right,  Main_Buffer.Width);
-    int ending_y   = min(dest_rect.bottom, Main_Buffer.Height);
+    int starting_x = MAX(dest_rect.left, 0);
+    int starting_y = MAX(dest_rect.top,  0);
+    int ending_x   = MIN(dest_rect.right,  Main_Buffer.Width);
+    int ending_y   = MIN(dest_rect.bottom, Main_Buffer.Height);
     
     if (starting_x > Main_Buffer.Width)  return;
     if (starting_y > Main_Buffer.Height) return;
@@ -603,14 +617,22 @@ void compute_centers(v2 *centers, int x_caps, int y_caps, int radius) {
     }
 }
 
+void compute_centers_randomly(v2 *centers, int centers_length, int bmp_width, int bmp_height) {
+
+    for (int i = 0; i < centers_length; i++) {
+        centers[i].x = rand() % bmp_width;
+        centers[i].y = rand() % bmp_height;
+    }
+}
+
 float compute_color_average(bitmap image, int center_x, int center_y, int radius, uint8 R_mask = 0xff, uint8 G_mask = 0xff, uint8 B_mask = 0xff) {
     int sum   = 0;
     int count = 0;
 
-    int starting_x = max(center_x - radius, 0);
-    int starting_y = max(center_y - radius, 0);
-    int ending_x   = min(center_x + radius, image.Width);
-    int ending_y   = min(center_y + radius, image.Height);
+    int starting_x = MAX(center_x - radius, 0);
+    int starting_y = MAX(center_y - radius, 0);
+    int ending_x   = MIN(center_x + radius, image.Width);
+    int ending_y   = MIN(center_y + radius, image.Height);
     
     if (starting_x > image.Width)  return 0.0;
     if (starting_y > image.Height) return 0.0;
@@ -641,8 +663,6 @@ float compute_color_average(bitmap image, int center_x, int center_y, int radius
     else            return (float) sum / (float) count;
 }
 
-#define clamp(a, b, c) (((a) > (c)) ? (c) : (((a) < (b)) ? (b) : (a)))
-
 struct Conversion_Parameters {
     int x_caps = 1;
     int y_caps = 1;
@@ -656,33 +676,16 @@ struct Conversion_Parameters {
     int source_brightness = 50;
     int source_contrast   = 50;
 
-    bool inverse  = false;
-    bool by_color = false;
-    bool hard_max = false;
+    bool inverse        = false;
+    bool by_color       = false;
+    bool hard_max       = false;
+    bool shuffle_caps   = false;
+    bool random_centers = false;
 
     bool save_as_png = true;
     bool save_as_bmp = false;
     bool save_as_jpg = false;
 };
-
-struct Zoom_Parameters {
-    float zoom_level = 1.0;
-
-    int center_x = 0;
-    int center_y = 0;
-};
-
-void reset_zoom(Zoom_Parameters *zoom, bitmap *image = NULL) {
-    zoom->zoom_level = 1.0;
-
-    if (image) {
-        zoom->center_x = image->Width  / 2;
-        zoom->center_y = image->Height / 2;
-    } else {
-        zoom->center_x = 0;
-        zoom->center_y = 0;
-    }
-}
 
 void shuffle(v2 *array, int array_length, int shuffle_times)
 {
@@ -754,8 +757,8 @@ int *compute_indexes_by_color(bitmap image, v2 *centers, Conversion_Parameters p
             distance /= 3.0 * 255.0 * 255.0;
             
             if (param.hard_max) {
-                distance = max((caps_colors[j].R - R_value) * (caps_colors[j].R - R_value), (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value));
-                distance = max((caps_colors[j].B - B_value) * (caps_colors[j].B - B_value), distance);
+                distance = MAX((caps_colors[j].R - R_value) * (caps_colors[j].R - R_value), (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value));
+                distance = MAX((caps_colors[j].B - B_value) * (caps_colors[j].B - B_value), distance);
                 distance /= 255.0 * 255.0;
             }
 
@@ -893,9 +896,17 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
 
 bitmap create_image(bitmap image, Conversion_Parameters param) {
     
-    v2 *centers = (v2 *) malloc(sizeof(v2) * param.x_caps * param.y_caps);
-    compute_centers(centers, param.x_caps, param.y_caps, param.radius);
-    shuffle(centers, param.x_caps * param.y_caps, 1000); // Todo: make this an option
+    int number_of_centers = param.x_caps * param.y_caps;
+    v2 *centers = (v2 *) malloc(sizeof(v2) * number_of_centers);
+
+    if (param.random_centers) {
+        // Todo better centers
+        compute_centers_randomly(centers, number_of_centers, image.Width, image.Height);
+    } else {
+        compute_centers(centers, param.x_caps, param.y_caps, param.radius);
+    }
+
+    if (param.shuffle_caps) shuffle(centers, param.x_caps * param.y_caps, 100);
 
     int *indexes;
     if (param.by_color) indexes = compute_indexes_by_color(image, centers, param);
@@ -934,52 +945,6 @@ bitmap create_image(bitmap image, Conversion_Parameters param) {
     return result_bitmap;
 }
 
-struct Error_Report {
-    bool active;
-
-    RECT rect;
-    int  rect_side;
-
-    Color rect_color;
-    Color text_color;
-
-    char text[260];
-    int  length;
-};
-
-Error_Report error = {0};
-
-void render_error() {
-    if (!error.active) return;
-
-    render_rectangle(error.rect, error.rect_color, error.rect_side);
-    render_text(error.text, error.length, Small_Font, error.rect, error.text_color);
-}
-
-void report_error(char *text) {
-    int length = strlen(text);
-    memcpy(error.text, text, length);
-    error.length = length;
-    error.active = true;
-
-    error.rect.left   = 50;
-    error.rect.top    = 700;
-    error.rect.right  = error.rect.left + (length + 3) * Font.advance * Font.scale[Small_Font];
-    error.rect.bottom = error.rect.top + 40;
-
-    error.rect_side = 3;
-
-    error.text_color = ERROR_RED;
-    error.rect_color = WHITE;
-}
-
-void report_warning(char *text) {
-    report_error(text);
-    error.text_color = WARNING;
-}
-
-void clear_error() { error.active = false; }
-
 RECT compute_rendering_position(RECT dest_rect, int dest_side, int source_width, int source_height) {
     RECT result;
 
@@ -1006,14 +971,16 @@ inline bool v2_inside_rect(v2 v, RECT rect) {
     return true;
 }
 
-enum push_result {
-    BUTTON_NOT_PRESSED_NOR_HOVERED,
-    BUTTON_HOVERED,
-    BUTTON_PRESSED,
+enum Push_Result {
+    Button_not_Pressed_nor_Hovered,
+    Button_Hovered,
+    Button_Left_Clicked,
+    Button_Right_Clicked,
 };
 
 int push_button(RECT rect, int side, Color_Palette palette, char *text = "", int font_size = 0) {
-    bool pressing = (left_button_down && !handled_press);
+    bool left_press  = (left_button_down  && !handled_press_left);
+    bool right_press = (right_button_down && !handled_press_right);
     bool hovering = v2_inside_rect(mouse_position, rect);
 
     Color button_color = hovering ? palette.highlight_button_color : palette.button_color;
@@ -1023,9 +990,11 @@ int push_button(RECT rect, int side, Color_Palette palette, char *text = "", int
     render_rectangle(rect, button_color, side);
     render_text(text, strlen(text), font_size, rect, text_color);
 
-    if ( pressing && hovering) return BUTTON_PRESSED;
-    if (!pressing && hovering) return BUTTON_HOVERED;
-    return BUTTON_NOT_PRESSED_NOR_HOVERED;
+    if (left_press  && hovering) return Button_Left_Clicked;
+    if (right_press && hovering) return Button_Right_Clicked;
+    if (hovering) return Button_Hovered;
+
+    return Button_not_Pressed_nor_Hovered;
 }
 
 bool open_file_externally(char *file_name, int size_file_name) {
@@ -1102,7 +1071,45 @@ struct Slider_Handler {
 
 Slider_Handler sliders;
 
-void shift_down_rect(RECT *rect, int by) { rect->top += by; rect->bottom += by; }
+RECT reset_zoom_rectangle(bitmap image, RECT render_rect) {
+
+    float scale_w = (float) image.Width  / (float) get_w(render_rect);
+    float scale_h = (float) image.Height / (float) get_h(render_rect);
+
+    int w = scale_w > scale_h ? image.Width  : get_w(render_rect) * scale_h;
+    int h = scale_w < scale_h ? image.Height : get_h(render_rect) * scale_w;
+
+    int delta_x = (image.Width  - w) / 2;
+    int delta_y = (image.Height - h) / 2;
+
+    RECT result = {delta_x, delta_y, w + delta_x, h + delta_y};
+
+    return result;
+}
+
+RECT update_zoom(RECT render_rect, RECT zoom_rect, float delta) {
+    int w = get_w(zoom_rect);
+    int h = get_h(zoom_rect);
+
+    int click_x = mouse_position.x - render_rect.left;
+    int click_y = mouse_position.y - render_rect.top;
+
+    float percentage_x = (float) click_x / (float) get_w(render_rect);
+    float percentage_y = (float) click_y / (float) get_h(render_rect);
+
+    int hover_image_x = percentage_x * w + zoom_rect.left;
+    int hover_image_y = percentage_y * h + zoom_rect.top;
+
+    w *= (1 + delta);
+    h *= (1 + delta);
+
+    zoom_rect.left   = hover_image_x - w * percentage_x;
+    zoom_rect.right  = hover_image_x + w * (1 - percentage_x);
+    zoom_rect.top    = hover_image_y - h * percentage_y;
+    zoom_rect.bottom = hover_image_y + h * (1 - percentage_y);
+
+    return zoom_rect;
+}
 
 int get_CPM() {
     LARGE_INTEGER counter_per_second;
@@ -1145,8 +1152,7 @@ int main(void) {
     bitmap result_bitmap = {0};
 
     Conversion_Parameters param;
-    Zoom_Parameters source_zoom, result_zoom;
-    RECT source_zoom_rect, processed_zoom_rect;
+    RECT source_zoom_rectangle, processed_zoom_rectangle;
 
     while (true) {
         // Handle Messages
@@ -1161,18 +1167,19 @@ int main(void) {
         // Render
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         
-        RECT source_rect = {50, 50, 400, 500};
+        RECT source_rect        = {50, 50, 400, 500};
+        RECT render_source_rect = {source_rect.left + 5, source_rect.top + 5, source_rect.right - 5, source_rect.bottom - 5};
         int source_button_result = push_button(source_rect, 5, default_palette);
-        if (source_button_result == BUTTON_PRESSED) {
+        if (source_button_result == Button_Left_Clicked) {
             char temp_file_name[file_name_size];
-            
             bool success = open_file_externally(temp_file_name, file_name_size);
-            if (!success) break;
-            
-            free(image.Memory);
-            image.Memory = stbi_load(temp_file_name, &image.Width, &image.Height, &Bpp, 0);
 
-            if (image.Memory) {
+            if (success) {
+                if (image.Memory) free(image.Memory);
+                image.Memory = stbi_load(temp_file_name, &image.Width, &image.Height, &Bpp, 0);
+            }
+
+            if (image.Memory && success) {
                 adjust_bpp(&image, Bpp);
                 // swap_red_and_blue_channels(&image);
                 premultiply_alpha(&image);
@@ -1183,68 +1190,107 @@ int main(void) {
 
                 memcpy(file_name, temp_file_name, file_name_size);
 
+                source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
                 compute_dimensions_from_radius(image, &param);
-                reset_zoom(&source_zoom, &image);
                 
-                // temp
-                source_zoom.zoom_level = max(image.Width / get_w(source_rect), image.Height / get_h(source_rect));
-                float zoom = source_zoom.zoom_level;
-                source_zoom_rect = get_rect(0, 0, get_w(source_rect) * zoom, get_h(source_rect) * zoom);
-
-                save_counter = 1; // Todo: Not necessarily
-                clear_error();
-            } else {
-                report_error("Failed to open file");
+                save_counter = 1; // Todo: Not necessarily, find out which one it is
             }
+        } else if (source_button_result == Button_Right_Clicked) {
+            source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
         }
 
-        RECT processed_rect = {650, 50, 1000, 500};
+        RECT processed_rect        = {650, 50, 1000, 500};
+        RECT render_processed_rect = {processed_rect.left + 5, processed_rect.top + 5, processed_rect.right - 5, processed_rect.bottom - 5};
         int processed_button_result = push_button(processed_rect, 5, default_palette);
-        if (processed_button_result == BUTTON_PRESSED) {
+        if (processed_button_result == Button_Left_Clicked) {
             if (image.Memory) {
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
                 result_bitmap = create_image(image, param);
-                reset_zoom(&result_zoom, &result_bitmap);
-
-                // temp
-                result_zoom.zoom_level = max(image.Width / get_w(processed_rect), image.Height / get_h(processed_rect));
-                float zoom = result_zoom.zoom_level;
-                processed_zoom_rect = get_rect(0, 0, get_w(processed_rect) * zoom, get_h(processed_rect) * zoom);
-
+                processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+                
                 saved_changes = false;
-                clear_error();
-            } else {
-                report_warning("Nothing to process");
             }
+        } else if (processed_button_result == Button_Right_Clicked) {
+            processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
         }
 
         if (mousewheel_counter != 0) {
-            if (source_button_result == BUTTON_HOVERED) {
-                source_zoom.zoom_level += 1.0 / (2.0 * (float) mousewheel_counter);
-                source_zoom.zoom_level = clamp(source_zoom.zoom_level, 1.0 / 500.0, 100);
+            float factor = -0.001;
+            float delta  = factor * mousewheel_counter;
 
-                float zoom = source_zoom.zoom_level;
-                source_zoom_rect = get_rect(0, 0, get_w(source_rect) * zoom, get_h(source_rect) * zoom);
+            if (source_button_result == Button_Hovered) {
+                source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta);
             }
-            if (processed_button_result == BUTTON_HOVERED) {
-                result_zoom.zoom_level += 1.0 / (2.0 * (float) mousewheel_counter);
-                result_zoom.zoom_level = clamp(result_zoom.zoom_level, 1.0 / 500.0, 100);
+            if (processed_button_result == Button_Hovered) {
+                processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta);
+            }
 
-                float zoom = result_zoom.zoom_level;
-                processed_zoom_rect = get_rect(0, 0, get_w(processed_rect) * zoom, get_h(processed_rect) * zoom);
-            }
             mousewheel_counter = 0;
         }
+        
+        if (image.Memory) {
+            render_bitmap_to_screen(&image, render_source_rect, source_zoom_rectangle);
+        }
+
+        if (result_bitmap.Memory) {
+            render_bitmap_to_screen(&result_bitmap, render_processed_rect, processed_zoom_rectangle);
+        }
+
+        Panel settings_panel = make_panel(425, 50, 30, 200, Small_Font);
+        settings_panel.add_title("Settings", BLUE);
+
+        settings_panel.row();
+        int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(param.radius));
+        param.radius = MAX(1, param.radius + radius_press);
+        if (radius_press != 0) compute_dimensions_from_radius(image, &param);
+        
+        settings_panel.row();
+        int x_caps_press = settings_panel.push_updown_counter("X Caps", default_palette, UpDown_(param.x_caps));
+        param.x_caps = MAX(1, param.x_caps + x_caps_press);
+        if (x_caps_press != 0) compute_dimensions_from_x_caps(image, &param);
+        
+        settings_panel.row();
+        int y_caps_press = settings_panel.push_updown_counter("Y Caps", default_palette, UpDown_(param.y_caps));
+        param.y_caps = MAX(1, param.y_caps + y_caps_press);
+        if (y_caps_press != 0) compute_dimensions_from_y_caps(image, &param);
+
+        settings_panel.row();
+        float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(param.scale), true);
+        if (param.scale >= 2) scale_press *= 0.5;
+        else                  scale_press *= 0.1;
+        param.scale = MAX(0.1, param.scale + scale_press);
+
+        settings_panel.row();
+        settings_panel.row(3);
+        settings_panel.push_toggler("png", default_palette, &param.save_as_png);
+        settings_panel.push_toggler("bmp", default_palette, &param.save_as_bmp);
+        settings_panel.push_toggler("jpg", default_palette, &param.save_as_jpg);
+
+        settings_panel.row();
+        settings_panel.push_toggler("Inverse", default_palette, &param.inverse);
+        
+        settings_panel.row();
+        settings_panel.push_toggler("By Color", default_palette, &param.by_color);
+        if (param.by_color) {
+            settings_panel.row();
+            settings_panel.push_toggler("Hard Max", default_palette, &param.hard_max);
+        }
+        
+        settings_panel.row();
+        settings_panel.push_toggler("Shuffle Caps", default_palette, &param.shuffle_caps);
+
+        settings_panel.row();
+        settings_panel.push_toggler("Random Centers", default_palette, &param.random_centers);
+
+        settings_panel.row();
+        RECT save_rect = {450, settings_panel.at_y, 600, settings_panel.at_y + 75};
 
         save_palette.background_color = saved_changes ? BLACK : WHITE;
-        int save_result = push_button({450, 425, 600, 425 + 75}, 3, save_palette, "Save", Medium_Font);
-        if (save_result == BUTTON_PRESSED) {
-            if (!result_bitmap.Memory) {
-                report_error("Nothing to save");
-                break;
-            }
+        int save_result = push_button(save_rect, 3, save_palette, "Save", Medium_Font);
+        if (save_result == Button_Left_Clicked) {
+            if (!result_bitmap.Memory) break;
 
             int dot_index = get_dot_index(file_name, file_name_size);
             assert(dot_index >= 0);
@@ -1280,62 +1326,7 @@ int main(void) {
             if (success) {
                 save_counter++;
                 saved_changes = true;
-                clear_error();
-            } else {
-                report_error("Failed to save result");
             }
-        }
-        
-        render_error();
-
-        if (image.Memory) {
-            RECT render_rect = {source_rect.left + 5, source_rect.top + 5, source_rect.right - 5, source_rect.bottom - 5};
-            render_bitmap_to_screen(&image, render_rect, source_zoom_rect);
-        }
-
-        if (result_bitmap.Memory) {
-            RECT render_rect = {processed_rect.left + 5, processed_rect.top + 5, processed_rect.right - 5, processed_rect.bottom - 5};
-            render_bitmap_to_screen(&result_bitmap, render_rect, processed_zoom_rect);
-        }
-
-        Panel settings_panel = make_panel(425, 50, 30, 200, Small_Font);
-        settings_panel.add_title("Settings", BLUE);
-
-        settings_panel.row();
-        int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(param.radius));
-        param.radius = max(1, param.radius + radius_press);
-        if (radius_press != 0) compute_dimensions_from_radius(image, &param);
-        
-        settings_panel.row();
-        int x_caps_press = settings_panel.push_updown_counter("X Caps", default_palette, UpDown_(param.x_caps));
-        param.x_caps = max(1, param.x_caps + x_caps_press);
-        if (x_caps_press != 0) compute_dimensions_from_x_caps(image, &param);
-        
-        settings_panel.row();
-        int y_caps_press = settings_panel.push_updown_counter("Y Caps", default_palette, UpDown_(param.y_caps));
-        param.y_caps = max(1, param.y_caps + y_caps_press);
-        if (y_caps_press != 0) compute_dimensions_from_y_caps(image, &param);
-
-        settings_panel.row();
-        float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(param.scale), true);
-        if (param.scale >= 2) scale_press *= 0.5;
-        else                  scale_press *= 0.1;
-        param.scale = max(0.1, param.scale + scale_press);
-
-        settings_panel.row();
-        settings_panel.row(3);
-        settings_panel.push_toggler("png", default_palette, &param.save_as_png);
-        settings_panel.push_toggler("bmp", default_palette, &param.save_as_bmp);
-        settings_panel.push_toggler("jpg", default_palette, &param.save_as_jpg);
-
-        settings_panel.row();
-        settings_panel.push_toggler("Inverse", default_palette, &param.inverse);
-        
-        settings_panel.row();
-        settings_panel.push_toggler("By Color", default_palette, &param.by_color);
-        if (param.by_color) {
-            settings_panel.row();
-            settings_panel.push_toggler("Hard Max", default_palette, &param.hard_max);
         }
 
         start_sliders();
@@ -1364,7 +1355,8 @@ int main(void) {
             saved_changes = false;
         }
 
-        handled_press = true;
+        handled_press_left  = true;
+        handled_press_right = true;
         blit_main_buffer_to_window();
 
         get_time(&t1);
@@ -1389,7 +1381,7 @@ void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
 
     int name_length = strlen(name);
-    int name_width = min(column_width - rect_side, (name_length + 2) * (Font.advance * Font.scale[font_size]));
+    int name_width = MIN(column_width - rect_side, (name_length + 2) * (Font.advance * Font.scale[font_size]));
     RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
     bool highlighted = v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect);
@@ -1403,7 +1395,7 @@ void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
 
     at_x += column_width;
 
-    if (!left_button_down || handled_press) return;
+    if (!left_button_down || handled_press_left) return;
 
     if (highlighted) *toggled = !(*toggled);
     return;
@@ -1441,7 +1433,7 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 
     at_x += column_width;
 
-    if (!left_button_down || handled_press) return 0;
+    if (!left_button_down || handled_press_left) return 0;
 
     if (v2_inside_rect(mouse_position, minus_rect)) return -1;
     if (v2_inside_rect(mouse_position, plus_rect))  return +1;

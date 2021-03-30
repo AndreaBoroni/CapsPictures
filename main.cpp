@@ -137,6 +137,7 @@ struct Color_Palette {
 Color_Palette default_palette = {DARK_WHITE, WHITE, BLUE,  BLUE,  DARK_BLUE, BLUE, BLACK};
 Color_Palette slider_palette  = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE, BLACK};
 Color_Palette save_palette    = {DARK_BLUE,  BLUE,  BLACK, BLACK, BLUE,      BLUE, BLACK};
+Color_Palette header_palette  = {GRAY,      WHITE, BLACK, BLACK, BLACK,     BLUE, BLACK};
 
 const int Packed_Font_W = 500;
 const int Packed_Font_H = 500;
@@ -262,7 +263,6 @@ void blit_main_buffer_to_window() {
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // destination
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // source
                   Main_Buffer.Memory, Main_Buffer.Info, DIB_RGB_COLORS, SRCCOPY);
-
 }
 
 v2 screen_to_window_position(POINT pos) {
@@ -332,8 +332,7 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
 #define INITIAL_WIDTH  1100
 #define INITIAL_HEIGHT 750
 
-void start_main_window()
-{
+void start_main_window() {
     WNDCLASS WindowClass = {};
     WindowClass.style         = CS_OWNDC | CS_HREDRAW | CS_VREDRAW;
     WindowClass.lpfnWndProc   = main_window_callback;
@@ -463,6 +462,7 @@ void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width
     }
 }
 
+/* Not used
 void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 
     int starting_x = MAX(rect.left, 0);
@@ -484,6 +484,61 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
         uint32 *Pixel = (uint32 *)Row;     
         for (int X = starting_x; X < ending_x; X++) {
             *Pixel = c;
+            Pixel++;
+        }
+        Row += Dest_Pitch;
+    }
+}
+*/
+
+void blit_circle_to_bitmap(bitmap *Dest, bitmap *circle, int x, int y, int width, int height, Color color) {
+
+    if (width  < 0) width  = circle->Width;
+    if (height < 0) height = circle->Height;
+
+    int starting_x = MAX(x, 0);
+    int starting_y = MAX(y, 0);
+    int ending_x   = MIN(x + width,  Dest->Width);
+    int ending_y   = MIN(y + height, Dest->Height);
+    
+    if (starting_x > Dest->Width)  return;
+    if (starting_y > Dest->Height) return;
+    if (ending_x < 0) return;
+    if (ending_y < 0) return;
+
+    int x_bitmap, y_bitmap;
+
+    int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
+    uint8 *Row     = (uint8 *)  Dest->Memory;
+    uint32 *Texels = (uint32 *) circle->Memory;
+    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
+
+    float width_scale  = (float) circle->Width  / (float) width;
+    float height_scale = (float) circle->Height / (float) height;
+
+    for (int Y = starting_y; Y < ending_y; Y++) {
+        uint32 *Pixel = (uint32 *)Row;
+        y_bitmap = (Y - y) * height_scale;
+        for (int X = starting_x; X < ending_x; X++) {
+            x_bitmap = (X - x) * width_scale;
+            uint32 source_pixel = Texels[x_bitmap + y_bitmap * circle->Width];
+
+            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            uint8 SR = color.R * SA;
+            uint8 SG = color.G * SA;
+            uint8 SB = color.B * SA;
+
+            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
+            uint8 DR =  (*Pixel >> 16) & 0xff;
+            uint8 DG =  (*Pixel >>  8) & 0xff;
+            uint8 DB =  (*Pixel >>  0) & 0xff;
+
+            uint8 A = 255 * (SA + DA - SA*DA);
+            uint8 R = DR * (1 - SA) + SR;
+            uint8 G = DG * (1 - SA) + SG;
+            uint8 B = DB * (1 - SA) + SB;
+
+            *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
             Pixel++;
         }
         Row += Dest_Pitch;
@@ -558,7 +613,7 @@ void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
 }
 
 #define SQRT_2 1.4142
-void compute_centers(v2 *centers, int x_caps, int y_caps, int radius) {
+void compute_centers_hex(v2 *centers, int x_caps, int y_caps, int radius) {
     int delta_vertical   = (SQRT_2 * radius) + 0.5;
     int delta_horizontal = 2 * radius;
 
@@ -646,34 +701,48 @@ struct General_Settings {
 
     int source_brightness = 50;
     int source_contrast   = 50;
-};
 
-General_Settings settings;
-
-struct Caps_Conversion_Parameters {
-    int x_caps = 1;
-    int y_caps = 1;
-    int radius = 10;
-    
-    float scale = 1.0;
-
-    bool inverse        = false;
-    bool by_color       = false;
-    bool hard_max       = false;
-    bool shuffle_caps   = false;
-    bool random_centers = false;
 
     bool save_as_png = true;
     bool save_as_bmp = false;
     bool save_as_jpg = false;
+
+    float scale = 1.0;
+
+    bool caps_selected    = true;
+    bool circles_selected = false;
+
+    bool centers_grid   = false;
+    bool centers_hex    = true;
+    bool centers_random = false;
+
+    // centers_hex is selected
+    int x_hex  = 10;
+    int y_hex  = 10;
+    int radius = 10;
+    
+    // centers_grid is selected
+    int x_grid = 10;
+    int y_grid = 10;
+    int width  = 20;
+
+    // centers_random is selected
+    int total_centers = 100;
+    int random_radius = 10;
+};
+General_Settings settings;
+
+struct Caps_Conversion_Parameters {
+    bool inverse        = false;
+    bool by_color       = false;
+    bool hard_max       = false;
+    bool shuffle_caps   = false;
 };
 
 struct Circles_Conversion_Parameters {
-    int x_circles = 20;
-    int y_circles = 20;
-    int width = 40;
+    int adjusted_brightness = 50;
 
-    float scale = 1.0;
+    bool inverse = false;
 };
 
 void shuffle(v2 *array, int array_length, int shuffle_times)
@@ -689,16 +758,15 @@ void shuffle(v2 *array, int array_length, int shuffle_times)
     }
 }
 
-int *compute_indexes(bitmap image, v2 *centers, Caps_Conversion_Parameters param) {
+int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radius) {
 
-    int number_of_centers = param.x_caps * param.y_caps;
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
 
     int min_index = Total_Caps - 1;
     int max_index = 0;
 
     for (int i = 0; i < number_of_centers; i++) {
-        Color c = compute_color_average(image, centers[i].x, centers[i].y, param.radius);
+        Color c = compute_color_average(image, centers[i].x, centers[i].y, radius);
         auto gray_value = (c.R + c.G + c.B) / 3.0;
         gray_value = clamp(gray_value, 0, 255.0);
         indexes[i] = (gray_value / 255.0) * (Total_Caps - 1);
@@ -713,25 +781,23 @@ int *compute_indexes(bitmap image, v2 *centers, Caps_Conversion_Parameters param
     for (int i = 0; i < number_of_centers; i++) {
         indexes[i] = (indexes[i] - min_index) * scale;
         indexes[i] = clamp(indexes[i], 0, Total_Caps); // should not happen (just to be sure)
-        if (param.inverse) indexes[i] = Total_Caps - indexes[i] - 1;
     }
 
     return indexes;
 }
 
-int *compute_indexes_by_color(bitmap image, v2 *centers, Caps_Conversion_Parameters param) {
+int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius, Caps_Conversion_Parameters param) {
 
-    int number_of_centers = param.x_caps * param.y_caps;
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
+    assert(indexes);
 
     Color caps_colors[Total_Caps];
-
     for (int i = 0; i < Total_Caps; i++) {
         caps_colors[i] = compute_color_average(caps_data[i], 0, 0, caps_data[i].Width);
     }
 
     for (int i = 0; i < number_of_centers; i++) {
-        Color c = compute_color_average(image, centers[i].x, centers[i].y, param.radius);
+        Color c = compute_color_average(image, centers[i].x, centers[i].y, radius);
         uint8 R_value = c.R;
         uint8 G_value = c.G;
         uint8 B_value = c.B;
@@ -757,46 +823,65 @@ int *compute_indexes_by_color(bitmap image, v2 *centers, Caps_Conversion_Paramet
         }
         assert(min_index >= 0);
         indexes[i] = min_index;
-
-        if (param.inverse) indexes[i] = Total_Caps - indexes[i] - 1;
     }
 
     return indexes;
 }
 
-Color *compute_centers_colors(bitmap image, v2 *centers, Circles_Conversion_Parameters param) {
+Color *compute_centers_colors(bitmap image, v2 *centers, int number_of_centers, int radius) {
 
-    int number_of_centers = param.x_circles * param.y_circles;
     Color *colors = (Color *) malloc(sizeof(Color) * number_of_centers);
     assert(colors);
 
     for (int i = 0; i < number_of_centers; i++) {
-        colors[i] = compute_color_average(image, centers[i].x, centers[i].y, param.width / 2.0);
+        colors[i] = compute_color_average(image, centers[i].x, centers[i].y, radius);
     }
 
     return colors;
 }
 
-void compute_dimensions_from_radius(bitmap image, Caps_Conversion_Parameters *param) {
-    if (param->radius <= 0) param->radius = 1;
-    param->x_caps = (float) image.Width  / (float) (2      * param->radius) + 1;
-    param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
+void compute_dimensions_from_radius(bitmap image) {
+    if (settings.radius <= 0) settings.radius = 1;
+    settings.x_hex = (float) image.Width  / (float) (2      * settings.radius) + 1;
+    settings.y_hex = (float) image.Height / (float) (SQRT_2 * settings.radius) + 1;
 }
 
-void compute_dimensions_from_x_caps(bitmap image, Caps_Conversion_Parameters *param) {  
-    if (param->x_caps <= 0) param->x_caps = 1;
-    param->radius = (float) image.Width / (float) (param->x_caps * 2);
+void compute_dimensions_from_x_hex(bitmap image) {  
+    if (settings.x_hex <= 0) settings.x_hex = 1;
+    settings.radius = (float) image.Width / (float) (settings.x_hex * 2);
 
-    if (param->radius <= 0) param->radius = 1;
-    param->y_caps = (float) image.Height / (float) (SQRT_2 * param->radius) + 1;
+    if (settings.radius <= 0) settings.radius = 1;
+    settings.y_hex = (float) image.Height / (float) (SQRT_2 * settings.radius) + 1;
 }
 
-void compute_dimensions_from_y_caps(bitmap image, Caps_Conversion_Parameters *param) {
-    if (param->y_caps <= 0) param->y_caps = 1;
-    param->radius = (float) image.Width / (float) (param->y_caps * SQRT_2);
+void compute_dimensions_from_y_hex(bitmap image) {
+    if (settings.y_hex <= 0) settings.y_hex = 1;
+    settings.radius = (float) image.Width / (float) (settings.y_hex * SQRT_2);
 
-    if (param->radius <= 0) param->radius = 1;
-    param->x_caps = (float) image.Height / (float) (2 * param->radius) + 1;
+    if (settings.radius <= 0) settings.radius = 1;
+    settings.x_hex = (float) image.Height / (float) (2 * settings.radius) + 1;
+}
+
+void compute_dimensions_from_width(bitmap image) {
+    if (settings.width <= 0) settings.width = 1;
+    settings.x_grid = (float) image.Width  / (float) settings.width + 1;
+    settings.y_grid = (float) image.Height / (float) settings.width + 1;
+}
+
+void compute_dimensions_from_x_grid(bitmap image) {
+    if (settings.x_grid <= 0) settings.x_grid = 1;
+    settings.width = (float) image.Width / (float) settings.x_grid;
+
+    if (settings.width <= 0) settings.width = 1;
+    settings.y_grid = (float) image.Height / (float) settings.width + 1;
+}
+
+void compute_dimensions_from_y_grid(bitmap image) {
+    if (settings.y_grid <= 0) settings.y_grid = 1;
+    settings.width = (float) image.Width / (float) settings.y_grid;
+
+    if (settings.width <= 0) settings.width = 1;
+    settings.x_grid = (float) image.Height / (float) settings.width + 1;
 }
 
 void adjust_bpp(bitmap *image, int Bpp) {
@@ -832,18 +917,6 @@ void swap_red_and_blue_channels(bitmap *image) {
         uint8 B = (Pixels[p] >> 16) & 0xff;
         uint8 G = (Pixels[p] >>  8) & 0xff;
         uint8 R = (Pixels[p] >>  0) & 0xff;
-        
-        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
-    }
-}
-
-void invert_image(bitmap *image) {
-    uint32 *Pixels = (uint32 *) image->Memory;
-    for (int p = 0; p < image->Width * image->Height; p++) {
-        uint8 A = 255 - ((Pixels[p] >> 24) & 0xff);
-        uint8 R = 255 - ((Pixels[p] >> 16) & 0xff);
-        uint8 G = 255 - ((Pixels[p] >>  8) & 0xff);
-        uint8 B = 255 - ((Pixels[p] >>  0) & 0xff);
         
         Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
@@ -908,33 +981,53 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
 
 }
 
-bitmap create_image(bitmap image, Caps_Conversion_Parameters param) {
-    
-    int number_of_centers = param.x_caps * param.y_caps;
-    v2 *centers = (v2 *) malloc(sizeof(v2) * number_of_centers);
+v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
+    v2 *centers;
+    if (settings.centers_random) {
+        (*number_of_centers) = settings.total_centers;
+        (*radius)            = settings.random_radius;
 
-    if (param.random_centers) {
-        // Todo better centers
-        compute_centers_randomly(centers, number_of_centers, image.Width, image.Height);
+        centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        compute_centers_randomly(centers, (*number_of_centers), image.Width, image.Height);
+    } else if (settings.centers_grid) {
+        (*number_of_centers) = settings.x_grid * settings.y_grid;
+        (*radius)            = settings.width / 2.0;
+
+        centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        compute_centers_grid(centers, settings.x_grid, settings.y_grid, settings.width);
     } else {
-        compute_centers(centers, param.x_caps, param.y_caps, param.radius);
-    }
+        (*number_of_centers) = settings.x_hex * settings.y_hex;
+        (*radius)            = settings.radius;
 
-    if (param.shuffle_caps) shuffle(centers, param.x_caps * param.y_caps, 100);
+        centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        compute_centers_hex(centers, settings.x_hex, settings.y_hex, settings.radius);
+    }
+    return centers;
+}
+
+bitmap create_image_caps(bitmap image, Caps_Conversion_Parameters param) {
+    
+    int number_of_centers, radius;
+    v2 *centers = get_centers(image, &number_of_centers, &radius);
+    
+    if (param.shuffle_caps) shuffle(centers, number_of_centers, 100);
 
     int *indexes;
-    if (param.by_color) indexes = compute_indexes_by_color(image, centers, param);
-    else                indexes = compute_indexes(image, centers, param);
+    if (param.by_color) indexes = compute_indexes_by_color(image, centers, number_of_centers, radius, param);
+    else                indexes = compute_indexes(image, centers, number_of_centers, radius);
+    
+    if (param.inverse) {
+        for (int i = 0; i < number_of_centers; i++) indexes[i] = Total_Caps - indexes[i] - 1;
+    }
 
-    int blit_radius = param.radius * param.scale;
-    for (int i = 0; i < param.x_caps * param.y_caps; i++) {
-        centers[i].x *= param.scale;
-        centers[i].y *= param.scale;
+    for (int i = 0; i < number_of_centers; i++) {
+        centers[i].x *= settings.scale;
+        centers[i].y *= settings.scale;
     }
     
     bitmap result_bitmap;
-    result_bitmap.Width  = image.Width  * param.scale;
-    result_bitmap.Height = image.Height * param.scale;
+    result_bitmap.Width  = image.Width  * settings.scale;
+    result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
@@ -945,9 +1038,9 @@ bitmap create_image(bitmap image, Caps_Conversion_Parameters param) {
         result_bitmap.Memory[i*4 + 3] = 255;
     }
     
-    int dim = 2 * blit_radius;
-    for (int i = 0; i < param.x_caps * param.y_caps; i++) {
-        blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - blit_radius, centers[i].y - blit_radius, dim, dim);
+    int dim = 2 * radius * settings.scale;
+    for (int i = 0; i < number_of_centers; i++) {
+        blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - dim / 2, centers[i].y - dim / 2, dim, dim);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -961,31 +1054,32 @@ bitmap create_image(bitmap image, Caps_Conversion_Parameters param) {
 
 bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
     
-    int number_of_centers = param.x_circles * param.y_circles;
-    v2 *centers = (v2 *) malloc(sizeof(v2) * number_of_centers);
-    
-    compute_centers_grid(centers, param.x_circles, param.y_circles, param.width);
-    Color *colors = compute_centers_colors(image, centers, param);
+    int number_of_centers, radius;
+    v2 *centers = get_centers(image, &number_of_centers, &radius);
+
+    Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 
     float *brightnesses = (float *) malloc(sizeof(float) * number_of_centers);
     float min_brightness = 255.0;
     float max_brightness = 0.0;
     for (int i = 0; i < number_of_centers; i++) {
-        centers[i].x *= param.scale;
-        centers[i].y *= param.scale;
+        centers[i].x *= settings.scale;
+        centers[i].y *= settings.scale;
 
         brightnesses[i] = (colors[i].R + colors[i].G + colors[i].B) / 3.0;
+
+        int b = (param.adjusted_brightness - 50) * 255.0 / 49.0;
+        colors[i].R = clamp((int) (colors[i].R + b), 0, 255);
+        colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
+        colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
+
         max_brightness = MAX(max_brightness, brightnesses[i]);
         min_brightness = MIN(min_brightness, brightnesses[i]);
     }
-
-    for (int i = 0; i < number_of_centers; i++) {
-        brightnesses[i] = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
-    }
     
     bitmap result_bitmap;
-    result_bitmap.Width  = image.Width  * param.scale;
-    result_bitmap.Height = image.Height * param.scale;
+    result_bitmap.Width  = image.Width  * settings.scale;
+    result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
@@ -996,25 +1090,20 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
         result_bitmap.Memory[i*4 + 3] = 255;
     }
     
-    int dim = param.width * param.scale;
+    int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
-        RECT rect;
-        rect.left   = centers[i].x - dim / 2.0;
-        rect.right  = centers[i].x + dim / 2.0;
-        rect.top    = centers[i].y - dim / 2.0;
-        rect.bottom = centers[i].y + dim / 2.0;
-
-        blit_rectangle_to_bitmap(&result_bitmap, colors[i], rect);
-
-        int index = (255.0 - brightnesses[i]) / 255.0 * (Total_Circles - 1);
+        float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
+        
+        int index = (255.0 - b) / 255.0 * (Total_Circles - 1);
+        if (param.inverse) index = Total_Circles - 1 - index;
         index = clamp(index, 0, Total_Circles - 1);
         
-        blit_bitmap_to_bitmap(&result_bitmap, &circles_data[index], centers[i].x - dim / 2.0, centers[i].y - dim / 2.0, dim, dim);
+        blit_circle_to_bitmap(&result_bitmap, &circles_data[index], centers[i].x - dim / 2.0, centers[i].y - dim / 2.0, dim, dim, colors[i]);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-    // apply_brightness(result_bitmap, settings.result_brightness);
-    // apply_contrast(result_bitmap,   settings.result_contrast);
+    apply_brightness(result_bitmap, settings.result_brightness);
+    apply_contrast(result_bitmap,   settings.result_contrast);
 
     free(centers);
     free(colors);
@@ -1124,11 +1213,15 @@ struct Panel {
     int font_size = Small_Font;
 
     void row(int columns = 1, float height_factor = 1);
+    void indent(float indent_percentage = 0.1);
+
     void push_toggler(char *name, Color_Palette palette, bool *toggled);
     int  push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float = false);
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
     bool push_button(char *text, Color_Palette palette, int thickness = 2);
+    bool push_header(char *text, Color_Palette palette, bool selected);
     void add_title(char *title, Color c);
+
 };
 
 Panel make_panel(int x, int y, int height, int width, int font_size) {
@@ -1231,9 +1324,6 @@ int main(void) {
         circles_data[i].Memory = stbi_load(filepath.c_str(), &circles_data[i].Width, &circles_data[i].Height, &Bpp, Bytes_Per_Pixel);
         assert(circles_data[i].Memory);
         assert(Bpp == Bytes_Per_Pixel);
-
-        invert_image(&circles_data[i]);
-        premultiply_alpha(&circles_data[i]);
     }
 
     const int file_name_size = 400;
@@ -1244,8 +1334,8 @@ int main(void) {
     bitmap image = {0};
     bitmap result_bitmap = {0};
 
-    Caps_Conversion_Parameters param;
-    Circles_Conversion_Parameters circles_param;
+    Caps_Conversion_Parameters caps;
+    Circles_Conversion_Parameters circles;
 
     RECT source_zoom_rectangle, processed_zoom_rectangle;
 
@@ -1287,7 +1377,8 @@ int main(void) {
                 memcpy(file_name, temp_file_name, file_name_size);
 
                 source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
-                compute_dimensions_from_radius(image, &param);
+                compute_dimensions_from_radius(image);
+                compute_dimensions_from_width(image);
 
                 apply_brightness(image, settings.source_brightness);
                 apply_contrast(image,   settings.source_contrast);
@@ -1298,7 +1389,7 @@ int main(void) {
             source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
         }
 
-        RECT processed_rect        = {650, 50, 1000, 500};
+        RECT processed_rect        = {700, 50, 1050, 500};
         RECT render_processed_rect = {processed_rect.left + 5, processed_rect.top + 5, processed_rect.right - 5, processed_rect.bottom - 5};
         int processed_button_result = push_button(processed_rect, 5, default_palette);
         if (processed_button_result == Button_Left_Clicked) {
@@ -1306,12 +1397,9 @@ int main(void) {
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
-                // result_bitmap = create_image(image, param);
+                if (settings.caps_selected) result_bitmap = create_image_caps(image, caps);
+                else                        result_bitmap = create_image_circles(image, circles);
 
-                circles_param.width     = param.radius * 2;
-                circles_param.x_circles = param.x_caps;
-                circles_param.y_circles = param.y_caps / SQRT_2;
-                result_bitmap = create_image_circles(image, circles_param);
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
                 
                 saved_changes = false;
@@ -1342,51 +1430,121 @@ int main(void) {
             render_bitmap_to_screen(&result_bitmap, render_processed_rect, processed_zoom_rectangle);
         }
 
-        Panel settings_panel = make_panel(425, 50, 30, 200, Small_Font);
+        // SETTINGS PANEL
+        Panel settings_panel = make_panel(425, 50, 30, 250, Small_Font);
         settings_panel.add_title("Settings", BLUE);
 
-        settings_panel.row();
-        int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(param.radius));
-        param.radius = MAX(1, param.radius + radius_press);
-        if (radius_press != 0) compute_dimensions_from_radius(image, &param);
-        
-        settings_panel.row();
-        int x_caps_press = settings_panel.push_updown_counter("X Caps", default_palette, UpDown_(param.x_caps));
-        param.x_caps = MAX(1, param.x_caps + x_caps_press);
-        if (x_caps_press != 0) compute_dimensions_from_x_caps(image, &param);
-        
-        settings_panel.row();
-        int y_caps_press = settings_panel.push_updown_counter("Y Caps", default_palette, UpDown_(param.y_caps));
-        param.y_caps = MAX(1, param.y_caps + y_caps_press);
-        if (y_caps_press != 0) compute_dimensions_from_y_caps(image, &param);
-
-        settings_panel.row();
-        float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(param.scale), true);
-        if (param.scale >= 2) scale_press *= 0.5;
-        else                  scale_press *= 0.1;
-        param.scale = MAX(0.1, param.scale + scale_press);
-
-        settings_panel.row();
-        settings_panel.row(3);
-        settings_panel.push_toggler("png", default_palette, &param.save_as_png);
-        settings_panel.push_toggler("bmp", default_palette, &param.save_as_bmp);
-        settings_panel.push_toggler("jpg", default_palette, &param.save_as_jpg);
-
-        settings_panel.row();
-        settings_panel.push_toggler("Inverse", default_palette, &param.inverse);
-        
-        settings_panel.row();
-        settings_panel.push_toggler("By Color", default_palette, &param.by_color);
-        if (param.by_color) {
-            settings_panel.row();
-            settings_panel.push_toggler("Hard Max", default_palette, &param.hard_max);
+        settings_panel.row(2);
+        if (settings_panel.push_header("Caps", header_palette, settings.caps_selected)) {
+            settings.caps_selected    = true;
+            settings.circles_selected = false;
         }
-        
-        settings_panel.row();
-        settings_panel.push_toggler("Shuffle Caps", default_palette, &param.shuffle_caps);
+
+        if (settings_panel.push_header("Circles", header_palette, settings.circles_selected)) {
+            settings.caps_selected    = false;
+            settings.circles_selected = true;
+        }
+
+        settings_panel.row(1, 0.25);
+        settings_panel.row(3);
+        if (settings_panel.push_header("Grid", header_palette, settings.centers_grid)) {
+            settings.centers_grid   = true;
+            settings.centers_hex    = false;
+            settings.centers_random = false;
+        }
+        if (settings_panel.push_header("Hex", header_palette, settings.centers_hex)) {
+            settings.centers_grid   = false;
+            settings.centers_hex    = true;
+            settings.centers_random = false;
+        }
+        if (settings_panel.push_header("Rnd", header_palette, settings.centers_random)) {
+            settings.centers_grid   = false;
+            settings.centers_hex    = false;
+            settings.centers_random = true;
+        }
+        settings_panel.row(1, 0.25);
+
+        if (settings.centers_hex) {
+            settings_panel.row();
+            int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.radius));
+            settings.radius = MAX(1, settings.radius + radius_press);
+            if (radius_press != 0) compute_dimensions_from_radius(image);
+            
+            settings_panel.row();
+            int x_hex_press = settings_panel.push_updown_counter("Horizontal", default_palette, UpDown_(settings.x_hex));
+            settings.x_hex = MAX(1, settings.x_hex + x_hex_press);
+            if (x_hex_press != 0) compute_dimensions_from_x_hex(image);
+            
+            settings_panel.row();
+            int y_hex_press = settings_panel.push_updown_counter("Vertical", default_palette, UpDown_(settings.y_hex));
+            settings.y_hex = MAX(1, settings.y_hex + y_hex_press);
+            if (y_hex_press != 0) compute_dimensions_from_y_hex(image);
+
+        } else if (settings.centers_grid) {
+            settings_panel.row();
+            int width_press = settings_panel.push_updown_counter("Width", default_palette, UpDown_(settings.width));
+            settings.width = MAX(1, settings.width + width_press);
+            if (width_press != 0) compute_dimensions_from_width(image);
+            
+            settings_panel.row();
+            int x_grid_press = settings_panel.push_updown_counter("Horizontal", default_palette, UpDown_(settings.x_grid));
+            settings.x_grid = MAX(1, settings.x_grid + x_grid_press);
+            if (x_grid_press != 0) compute_dimensions_from_x_grid(image);
+            
+            settings_panel.row();
+            int y_grid_press = settings_panel.push_updown_counter("Vertical", default_palette, UpDown_(settings.y_grid));
+            settings.y_grid = MAX(1, settings.y_grid + y_grid_press);
+            if (y_grid_press != 0) compute_dimensions_from_y_grid(image);
+        } else {
+            settings_panel.row();
+            int random_radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.random_radius));
+            settings.random_radius = MAX(1, settings.random_radius + random_radius_press);
+            
+            settings_panel.row();
+            int total_circles_press = settings_panel.push_updown_counter("Circles", default_palette, UpDown_(settings.total_centers));
+            settings.total_centers = MAX(1, settings.total_centers + total_circles_press * 10);
+        }
 
         settings_panel.row();
-        settings_panel.push_toggler("Random Centers", default_palette, &param.random_centers);
+        float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(settings.scale), true);
+        if (settings.scale >= 2) scale_press *= 0.5;
+        else                 scale_press *= 0.1;
+        settings.scale = MAX(0.1, settings.scale + scale_press);
+        
+        if (settings.caps_selected) {
+
+            settings_panel.row(1, 0.5);
+            settings_panel.row();
+            settings_panel.push_toggler("Inverse", default_palette, &caps.inverse);
+            
+            settings_panel.row();
+            settings_panel.push_toggler("By Color", default_palette, &caps.by_color);
+            if (caps.by_color) {
+                settings_panel.row();
+                settings_panel.indent(0.05);
+                settings_panel.push_toggler("Hard Max", default_palette, &caps.hard_max);
+            }
+            
+            settings_panel.row();
+            settings_panel.push_toggler("Shuffle Caps", default_palette, &caps.shuffle_caps);
+
+        } else {
+            assert(settings.circles_selected);
+
+            settings_panel.row(1, 0.5);
+            settings_panel.row();
+            float brightness_scale_press = settings_panel.push_updown_counter("Brightness", default_palette, UpDown_(circles.adjusted_brightness));
+            circles.adjusted_brightness = clamp(circles.adjusted_brightness + brightness_scale_press, 0, 100);
+
+            settings_panel.row();
+            settings_panel.push_toggler("Inverse", default_palette, &circles.inverse);
+        }
+
+        settings_panel.row(1, 0.5);
+        settings_panel.row(3);
+        settings_panel.push_toggler("png", default_palette, &settings.save_as_png);
+        settings_panel.push_toggler("bmp", default_palette, &settings.save_as_bmp);
+        settings_panel.push_toggler("jpg", default_palette, &settings.save_as_jpg);
 
         settings_panel.row(1, 2);
         save_palette.background_color = saved_changes ? BLACK : WHITE;
@@ -1402,7 +1560,7 @@ int main(void) {
 
             swap_red_and_blue_channels(&result_bitmap);
 
-            if (param.save_as_png) {
+            if (settings.save_as_png) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".png");
@@ -1410,14 +1568,14 @@ int main(void) {
                 success = stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, pitch);
             }
             
-            if (param.save_as_bmp) {
+            if (settings.save_as_bmp) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".bmp");
                 success = stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
             }
 
-            if (param.save_as_jpg) {
+            if (settings.save_as_jpg) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".jpg");
@@ -1470,11 +1628,16 @@ int main(void) {
 
 void Panel::row(int columns, float height_factor) {
     at_y += row_height;
-    at_x = left_x;
+    at_x  = left_x;
 
     // First you advance the at_y with the previous row_height
-    row_height = base_height * height_factor;
+    row_height   = base_height * height_factor;
     column_width = base_width / columns;
+}
+
+void Panel::indent(float indent_percentage) {
+    int indent_by = indent_percentage * column_width;
+    at_x += indent_by;
 }
 
 void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
@@ -1523,7 +1686,6 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
     Color value_color  = highlighted ? palette.highlight_value_color  : palette.value_color;
     Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
 
-
     char text[2] = "+";
     render_text(text, 1, font_size, plus_rect,  button_color);
     text[0] = '-';
@@ -1538,10 +1700,15 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 
     at_x += column_width;
 
-    if (!left_button_down || handled_press_left) return 0;
+    if (left_button_down && !handled_press_left) {
+        if (v2_inside_rect(mouse_position, minus_rect)) return -1;
+        if (v2_inside_rect(mouse_position, plus_rect))  return +1;
+    }
 
-    if (v2_inside_rect(mouse_position, minus_rect)) return -1;
-    if (v2_inside_rect(mouse_position, plus_rect))  return +1;
+    if (right_button_down && !handled_press_right) {
+        if (v2_inside_rect(mouse_position, minus_rect)) return -10;
+        if (v2_inside_rect(mouse_position, plus_rect))  return +10;
+    }
 
     return 0;
 }
@@ -1551,6 +1718,20 @@ void Panel::add_title(char *title, Color c) {
     render_text(title, strlen(title), clamp(font_size + 1, 0, N_SIZES - 1), title_rect, c);
 
     at_y += 0.5 * row_height;
+}
+
+bool Panel::push_header(char *text, Color_Palette palette, bool selected) {
+    RECT text_rect = get_rect(at_x, at_y, column_width, row_height);
+    Color text_color       = palette.text_color;
+    Color background_color = selected ? palette.highlight_button_color : palette.button_color;
+    
+    render_filled_rectangle(text_rect, background_color);
+    render_text(text, strlen(text), font_size, text_rect, text_color);
+
+    at_x += column_width;
+
+    bool hovered = v2_inside_rect(mouse_position, text_rect);
+    return hovered && left_button_down && !handled_press_left;
 }
 
 bool Panel::push_button(char *text, Color_Palette palette, int thickness) {
@@ -1565,6 +1746,8 @@ bool Panel::push_button(char *text, Color_Palette palette, int thickness) {
     render_filled_rectangle(button_rect, palette.background_color);
     render_rectangle(button_rect, button_color, thickness);
     render_text(text, text_length, Small_Font, button_rect, text_color);
+
+    at_x += column_width;
 
     return highlighted && left_button_down && !handled_press_left;
 }
@@ -1612,5 +1795,8 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     }
 
     render_text(*value, Small_Font, pos_rect, value_color);
+
+    at_x += column_width;
+
     return initial_value != *value;
 }

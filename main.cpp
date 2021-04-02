@@ -824,6 +824,15 @@ Color compute_color_average(bitmap image, int center_x, int center_y, int radius
     return result;
 }
 
+enum Centers_Style {
+    Grid,
+    Hexagonal,
+    Random,
+};
+
+#define Caps_Style    0
+#define Circles_Style 1
+
 struct General_Settings {
     int result_brightness = 50;
     int result_contrast   = 50;
@@ -839,13 +848,9 @@ struct General_Settings {
 
     bool lock_zoom = false;
 
-    bool caps_selected    = false;
-    bool circles_selected = true;
-
-    bool centers_grid   = true;
-    bool centers_hex    = false;
-    bool centers_random = false;
-
+    int caps_or_circles = Caps_Style;
+    int centers_style = Grid;
+    
     // centers_hex is selected
     int x_hex  = 10;
     int y_hex  = 10;
@@ -1117,19 +1122,20 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
 
 v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
     v2 *centers;
-    if (settings.centers_random) {
+    if (settings.centers_style == Random) {
         (*number_of_centers) = settings.total_centers;
         (*radius)            = settings.random_radius;
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
         compute_centers_randomly(centers, (*number_of_centers), image.Width, image.Height);
-    } else if (settings.centers_grid) {
+    } else if (settings.centers_style == Grid) {
         (*number_of_centers) = settings.x_grid * settings.y_grid;
         (*radius)            = settings.width / 2.0;
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
         compute_centers_grid(centers, settings.x_grid, settings.y_grid, settings.width);
     } else {
+        assert(settings.centers_style == Hexagonal);
         (*number_of_centers) = settings.x_hex * settings.y_hex;
         (*radius)            = settings.radius;
 
@@ -1342,7 +1348,7 @@ struct Panel {
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
     bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order);
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
-    bool push_header(char *text, Color_Palette palette, bool selected);
+    bool push_header(char *text, Color_Palette palette, int header, int *current_header);
     void add_title(char *title, Color c);
 };
 
@@ -1595,8 +1601,12 @@ int main(void) {
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
-                if (settings.caps_selected) result_bitmap = create_image_caps(image, caps);
-                else                        result_bitmap = create_image_circles(image, circles);
+                if (settings.caps_or_circles == Caps_Style) {
+                    result_bitmap = create_image_caps(image, caps);
+                } else {
+                    assert(settings.caps_or_circles == Circles_Style);
+                    result_bitmap = create_image_circles(image, circles);
+                }
 
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
                 source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
@@ -1628,7 +1638,6 @@ int main(void) {
                     source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta, zoom_center);
                 }
             }
-
             mousewheel_counter = 0;
         }
         
@@ -1647,24 +1656,12 @@ int main(void) {
 
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
-        if (settings_panel.push_header("Grid", header_palette, settings.centers_grid)) {
-            settings.centers_grid   = true;
-            settings.centers_hex    = false;
-            settings.centers_random = false;
-        }
-        if (settings_panel.push_header("Hex", header_palette, settings.centers_hex)) {
-            settings.centers_grid   = false;
-            settings.centers_hex    = true;
-            settings.centers_random = false;
-        }
-        if (settings_panel.push_header("Rnd", header_palette, settings.centers_random)) {
-            settings.centers_grid   = false;
-            settings.centers_hex    = false;
-            settings.centers_random = true;
-        }
+        settings_panel.push_header("Grid", header_palette, Grid,      &settings.centers_style);
+        settings_panel.push_header("Hex",  header_palette, Hexagonal, &settings.centers_style);
+        settings_panel.push_header("Rnd",  header_palette, Random,    &settings.centers_style);
         settings_panel.row(1, 0.25);
 
-        if (settings.centers_hex) {
+        if (settings.centers_style == Hexagonal) {
             settings_panel.row();
             int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.radius));
             settings.radius = MAX(1, settings.radius + radius_press);
@@ -1683,7 +1680,7 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
 
-        } else if (settings.centers_grid) {
+        } else if (settings.centers_style == Grid) {
             settings_panel.row();
             int width_press = settings_panel.push_updown_counter("Width", default_palette, UpDown_(settings.width));
             settings.width = MAX(1, settings.width + width_press);
@@ -1699,13 +1696,14 @@ int main(void) {
             settings.y_grid = MAX(1, settings.y_grid + y_grid_press);
             if (y_grid_press != 0) compute_dimensions_from_y_grid(image);
         } else {
+            assert(settings.centers_style == Random);
             settings_panel.row();
             int random_radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.random_radius));
             settings.random_radius = MAX(1, settings.random_radius + random_radius_press);
             
             settings_panel.row();
             int total_circles_press;
-            if (settings.caps_selected) {
+            if (settings.caps_or_circles == Caps_Style) {
                 total_circles_press = settings_panel.push_updown_counter("Caps", default_palette, UpDown_(settings.total_centers));
             } else {
                 total_circles_press = settings_panel.push_updown_counter("Circles", default_palette, UpDown_(settings.total_centers));
@@ -1722,18 +1720,11 @@ int main(void) {
         
         settings_panel.row(1, 0.5);
         settings_panel.row(2);
-        if (settings_panel.push_header("Caps", header_palette, settings.caps_selected)) {
-            settings.caps_selected    = true;
-            settings.circles_selected = false;
-        }
-
-        if (settings_panel.push_header("Circles", header_palette, settings.circles_selected)) {
-            settings.caps_selected    = false;
-            settings.circles_selected = true;
-        }
+        settings_panel.push_header("Caps", header_palette,    Caps_Style,    &settings.caps_or_circles);
+        settings_panel.push_header("Circles", header_palette, Circles_Style, &settings.caps_or_circles);
 
         settings_panel.row(1, 0.25);
-        if (settings.caps_selected) {
+        if (settings.caps_or_circles == Caps_Style) {
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &caps.inverse);
             
@@ -1746,7 +1737,7 @@ int main(void) {
             }
 
         } else {
-            assert(settings.circles_selected);
+            assert(settings.caps_or_circles == Circles_Style);
             
             settings_panel.row();
             settings_panel.push_slider("Brightness", slider_palette, &circles.adjusted_brightness, 1, 99, new_slider());
@@ -1933,21 +1924,25 @@ void Panel::add_title(char *title, Color c) {
     render_text(title, strlen(title), title_font_size, title_rect, c);
 }
 
-bool Panel::push_header(char *text, Color_Palette palette, bool selected) {
+bool Panel::push_header(char *text, Color_Palette palette, int header, int *current_header) {
     RECT text_rect = get_current_rect();
     bool highlighted = v2_inside_rect(mouse_position, text_rect) && !sliders.pressing_a_slider;
 
     Color text_color = palette.text_color;
     Color background_color = palette.background_color;
-    if (selected)         background_color = palette.highlight_button_color;
-    else if (highlighted) background_color = palette.button_color;
+    if (header == (*current_header)) background_color = palette.highlight_button_color;
+    else if (highlighted)            background_color = palette.button_color;
     
     render_filled_rectangle(text_rect, background_color);
     render_text(text, strlen(text), font_size, text_rect, text_color);
 
     at_x += column_width;
 
-    return highlighted && left_button_down && !handled_press_left;
+    if (highlighted && left_button_down && !handled_press_left) {
+        *current_header = header;
+        return true;
+    }
+    return false;
 }
 
 int Panel::push_button(char *text, Color_Palette palette, int thickness) {

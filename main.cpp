@@ -8,10 +8,9 @@ using namespace std;
     - Optimize
     - Make button to swap red and blue
     - Save with the correct number
-    - Clean up buttons generation
 UI:
     - Better rendering in the window
-    - Zoom in and out in the window
+    - Fix zooming
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -78,7 +77,7 @@ bitmap caps_data[Total_Caps];
 #define Total_Circles 20
 bitmap circles_data[Total_Circles];
 
-#define Total_Circles_FT 24
+#define Total_Circles_FT 50
 bitmap circle_texture;
 
 #define FIRST_CHAR_SAVED 32
@@ -117,6 +116,77 @@ struct Color {
     int B;
     int A;
 };
+
+struct Color_hsv {
+    float h, s, v;
+    uint8 alpha;
+};
+inline max_c(uint8 a, uint8 b, uint8 c) {
+    uint8 temp = MAX(a, b);
+    return MAX(temp, c);
+}
+inline min_c(uint8 a, uint8 b, uint8 c) {
+    uint8 temp = MIN(a, b);
+    return MIN(temp, c);
+}
+Color_hsv rgb_to_hsv(Color c) {
+    uint8 min = min_c(c.R, c.G, c.B);
+    uint8 max = max_c(c.R, c.G, c.B);
+    uint8 delta = max - min;
+
+    Color_hsv result;
+    result.alpha = c.A;
+    result.v     = (float) max / 255.0;
+
+    if (max > 0) result.s = (float) delta / (float) max;
+    else {
+        result.s = 0;
+        result.h = 0;
+        return result;
+    }
+
+    if      (c.R == max) result.h =     (float) (c.G - c.B) / (float) delta;
+    else if (c.G == max) result.h = 2 + (float) (c.B - c.R) / (float) delta;
+    else                 result.h = 4 + (float) (c.R - c.G) / (float) delta;
+
+    result.h *= 60;
+    if (result.h < 0) result.h += 360;
+
+    return result;
+}
+
+Color hsv_to_rgb(Color_hsv c) {
+
+    if (c.s == 0) return {c.v, c.v, c.v, c.alpha};
+
+    c.h /= 60; 
+    int sector = floor(c.h);
+    float diff = c.h - sector;
+    uint8 v = c.v * 255;
+    uint8 p = v * (1.0 - c.s);
+    uint8 q = v * (1.0 - c.s * diff);
+    uint8 t = v * (1.0 - c.s * (1.0 - diff));
+    
+    switch (sector) {
+        case 0: return {v, t, p, c.alpha};
+        case 1: return {q, v, p, c.alpha};
+        case 2: return {p, v, t, c.alpha};
+        case 3: return {p, q, v, c.alpha};
+        case 4: return {t, p, v, c.alpha};
+        case 5: return {v, p, q, c.alpha};
+    }
+    return {0, 0, 0, c.alpha};
+}
+
+Color shift_hue(Color c, int shift) {
+    Color_hsv hsv = rgb_to_hsv(c);
+    
+    hsv.h += shift;
+    while(hsv.h >= 360) hsv.h -= 360;
+    while(hsv.h <  0)   hsv.h += 360;
+
+    return hsv_to_rgb(hsv);
+}
 
 const Color WHITE      = {255, 255, 255, 255};
 const Color DARK_WHITE = {180, 180, 180, 255};
@@ -262,6 +332,7 @@ void resize_main_buffer(int new_width, int new_height) {
 void blit_main_buffer_to_window() {
     HDC DeviceContext = GetDC(Window);
 
+    // This function requires -lgdi32 to compile
     StretchDIBits(DeviceContext,
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // destination
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // source
@@ -332,7 +403,7 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
     return Result;
 }
 
-#define INITIAL_WIDTH  1200
+#define INITIAL_WIDTH  1120
 #define INITIAL_HEIGHT 750
 
 void start_main_window() {
@@ -766,6 +837,8 @@ struct General_Settings {
 
     float scale = 1.0;
 
+    bool lock_zoom = false;
+
     bool caps_selected    = false;
     bool circles_selected = true;
 
@@ -791,13 +864,14 @@ struct General_Settings {
 General_Settings settings;
 
 struct Caps_Conversion_Parameters {
-    bool inverse        = false;
-    bool by_color       = false;
-    bool hard_max       = false;
+    bool inverse  = false;
+    bool by_color = false;
+    bool hard_max = false;
 };
 
 struct Circles_Conversion_Parameters {
     int adjusted_brightness = 50;
+    int adjusted_hue        = 0;
 
     int range_high = Total_Circles_FT;
     int range_low  = 0;
@@ -1133,6 +1207,8 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
         colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
         colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
 
+        if (param.adjusted_hue) colors[i] = shift_hue(colors[i], param.adjusted_hue);
+
         max_brightness = MAX(max_brightness, brightnesses[i]);
         min_brightness = MIN(min_brightness, brightnesses[i]);
     }
@@ -1218,6 +1294,7 @@ bool open_file_externally(char *file_name, int size_file_name) {
     dialog_arguments.lpstrInitialDir = NULL;
     dialog_arguments.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
+    // This function requires -lComdlg32 to compile
     return GetOpenFileName(&dialog_arguments);
 }
 
@@ -1258,9 +1335,9 @@ struct Panel {
     void row(int columns = 1, float height_factor = 1);
     void current_row(int columns = 1, float height_factor = 1);
     void indent(float indent_percentage = 0.1);
-    RECT get_current_row_rect();
+    RECT get_current_rect();
 
-    void push_toggler(char *name, Color_Palette palette, bool *toggled);
+    bool push_toggler(char *name, Color_Palette palette, bool *toggled);
     int  push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float = false);
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
     bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order);
@@ -1327,12 +1404,12 @@ RECT reset_zoom_rectangle(bitmap image, RECT render_rect) {
     return result;
 }
 
-RECT update_zoom(RECT render_rect, RECT zoom_rect, float delta) {
+RECT update_zoom(RECT render_rect, RECT zoom_rect, float delta, v2 zoom_center) {
     int w = get_w(zoom_rect);
     int h = get_h(zoom_rect);
 
-    int click_x = mouse_position.x - render_rect.left;
-    int click_y = mouse_position.y - render_rect.top;
+    int click_x = zoom_center.x - render_rect.left;
+    int click_y = zoom_center.y - render_rect.top;
 
     float percentage_x = (float) click_x / (float) get_w(render_rect);
     float percentage_y = (float) click_y / (float) get_h(render_rect);
@@ -1392,7 +1469,7 @@ int main(void) {
     }
     
     int Bpp;
-    string filepath = "Circles/single_circles_texture.png";
+    string filepath = "Circles/circles_texture_50.png";
     circle_texture.Memory = stbi_load(filepath.c_str(), &circle_texture.Width, &circle_texture.Height, &Bpp, Bytes_Per_Pixel);
     assert(circle_texture.Memory);
     assert(Bpp == Bytes_Per_Pixel);
@@ -1436,16 +1513,48 @@ int main(void) {
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         
         int border = 5;
-
         // Source Image Panel
         Panel source_panel = make_panel(50, 50, 40, 350, Medium_Font);
         source_panel.current_row(1, 12);
 
-        RECT s_rect = source_panel.get_current_row_rect();
+        RECT s_rect = source_panel.get_current_rect();
         RECT render_source_rect = {s_rect.left + border, s_rect.top + border, s_rect.right - border, s_rect.bottom - border};
         
         int source_button_result = source_panel.push_button("Load image", default_palette, border);
         source_panel.font_size = Small_Font;
+
+        source_panel.row(1, 0.5);
+        source_panel.row();
+        bool s_change = source_panel.push_slider("Brightness", slider_palette, &settings.source_brightness, 1, 99, new_slider());
+        source_panel.row();
+        s_change |= source_panel.push_slider("Contrast", slider_palette, &settings.source_contrast, 1, 99, new_slider());
+        if (s_change) {
+            apply_brightness(image, settings.source_brightness, true);
+            apply_contrast(image,   settings.source_contrast);
+        }
+
+        // Processed Image Panel
+        Panel result_panel = make_panel(700, 50, 40, 350, Medium_Font);
+        result_panel.current_row(1, 12);
+
+        RECT p_rect = result_panel.get_current_rect();
+        RECT render_processed_rect = {p_rect.left + border, p_rect.top + border, p_rect.right - border, p_rect.bottom - border};
+
+        int processed_button_result = result_panel.push_button("Process image", default_palette, border);
+        result_panel.font_size = Small_Font;  
+
+        result_panel.row(1, 0.5);
+        result_panel.row();
+        bool r_change = result_panel.push_slider("Brightness", slider_palette, &settings.result_brightness, 1, 99, new_slider());
+        result_panel.row();
+        r_change |= result_panel.push_slider("Contrast", slider_palette, &settings.result_contrast, 1, 99, new_slider());
+        if (r_change) {
+            apply_brightness(result_bitmap, settings.result_brightness, true);
+            apply_contrast(result_bitmap,   settings.result_contrast);
+            if (result_bitmap.Memory) saved_changes = false;
+        }
+
+        // Process clicks, mousewheel and render bitmaps
         if (source_button_result == Button_Left_Clicked) {
             char temp_file_name[file_name_size];
             bool success = open_file_externally(temp_file_name, file_name_size);
@@ -1478,27 +1587,9 @@ int main(void) {
             }
         } else if (source_button_result == Button_Right_Clicked) {
             source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
+            if (settings.lock_zoom) processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
         }
-
-        source_panel.row(1, 0.5);
-        source_panel.row();
-        bool s_change = source_panel.push_slider("Brightness", slider_palette, &settings.source_brightness, 1, 99, new_slider());
-        source_panel.row();
-        s_change |= source_panel.push_slider("Contrast", slider_palette, &settings.source_contrast, 1, 99, new_slider());
-        if (s_change) {
-            apply_brightness(image, settings.source_brightness, true);
-            apply_contrast(image,   settings.source_contrast);
-        }
-
-        // Processed Image Panel
-        Panel result_panel = make_panel(700, 50, 40, 350, Medium_Font);
-        result_panel.current_row(1, 12);
-
-        RECT p_rect = result_panel.get_current_row_rect();
-        RECT render_processed_rect = {p_rect.left + border, p_rect.top + border, p_rect.right - border, p_rect.bottom - border};
-
-        int processed_button_result = result_panel.push_button("Process image", default_palette, border);
-        result_panel.font_size = Small_Font;
+        
         if (processed_button_result == Button_Left_Clicked) {
             if (image.Memory) {
                 free(result_bitmap.Memory);
@@ -1508,22 +1599,13 @@ int main(void) {
                 else                        result_bitmap = create_image_circles(image, circles);
 
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+                source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
                 
                 saved_changes = false;
             }
         } else if (processed_button_result == Button_Right_Clicked) {
             processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
-        }
-
-        result_panel.row(1, 0.5);
-        result_panel.row();
-        bool r_change = result_panel.push_slider("Brightness", slider_palette, &settings.result_brightness, 1, 99, new_slider());
-        result_panel.row();
-        r_change |= result_panel.push_slider("Contrast", slider_palette, &settings.result_contrast, 1, 99, new_slider());
-        if (r_change) {
-            apply_brightness(result_bitmap, settings.result_brightness, true);
-            apply_contrast(result_bitmap,   settings.result_contrast);
-            if (result_bitmap.Memory) saved_changes = false;
+            if (settings.lock_zoom) source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
         }
 
         if (mousewheel_counter != 0) {
@@ -1531,10 +1613,20 @@ int main(void) {
             float delta  = factor * mousewheel_counter;
 
             if (source_button_result == Button_Hovered) {
-                source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta);
+                source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta, mouse_position);
+                if (settings.lock_zoom) {
+                    v2 zoom_center = mouse_position;
+                    zoom_center.x += (render_processed_rect.left - render_source_rect.left);
+                    processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta, zoom_center);
+                }
             }
             if (processed_button_result == Button_Hovered) {
-                processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta);
+                processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta, mouse_position);
+                if (settings.lock_zoom) {
+                    v2 zoom_center = mouse_position;
+                    zoom_center.x += (render_source_rect.left - render_processed_rect.left);
+                    source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta, zoom_center);
+                }
             }
 
             mousewheel_counter = 0;
@@ -1550,6 +1642,7 @@ int main(void) {
 
         // Settings Panel
         Panel settings_panel = make_panel(425, 50, 30, 250, Small_Font);
+        settings_panel.current_row(1, 1.5);
         settings_panel.add_title("Settings", BLUE);
 
         settings_panel.row(1, 0.25);
@@ -1642,7 +1735,7 @@ int main(void) {
         settings_panel.row(1, 0.25);
         if (settings.caps_selected) {
             settings_panel.row();
-            settings_panel.push_toggler("Inverse", default_palette, &caps.inverse);
+            settings_panel.push_toggler("Invert", default_palette, &caps.inverse);
             
             settings_panel.row();
             settings_panel.push_toggler("By Color", default_palette, &caps.by_color);
@@ -1659,10 +1752,13 @@ int main(void) {
             settings_panel.push_slider("Brightness", slider_palette, &circles.adjusted_brightness, 1, 99, new_slider());
 
             settings_panel.row();
+            settings_panel.push_slider("Hue Shift", slider_palette, &circles.adjusted_hue, -180, 180, new_slider());
+
+            settings_panel.row();
             settings_panel.push_double_slider("Range", slider_palette, &circles.range_low, &circles.range_high, 0, Total_Circles_FT, new_slider());
 
             settings_panel.row();
-            settings_panel.push_toggler("Inverse", default_palette, &circles.inverse);
+            settings_panel.push_toggler("Invert", default_palette, &circles.inverse);
         }
 
         settings_panel.row(1, 0.5);
@@ -1716,6 +1812,13 @@ int main(void) {
         settings_panel.push_toggler("bmp", default_palette, &settings.save_as_bmp);
         settings_panel.push_toggler("jpg", default_palette, &settings.save_as_jpg);
 
+        settings_panel.row();
+        bool zoom_pressed = settings_panel.push_toggler("Lock Zoom", default_palette, &settings.lock_zoom);
+        if (zoom_pressed && settings.lock_zoom) {
+            if (result_bitmap.Memory) processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+            if (image.Memory)         source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
+        }
+
         handled_press_left  = true;
         handled_press_right = true;
         blit_main_buffer_to_window();
@@ -1746,11 +1849,11 @@ void Panel::indent(float indent_percentage) {
     at_x += indent_by;
 }
 
-RECT Panel::get_current_row_rect() {
-    return get_rect(at_x, at_y, base_width, row_height);
+RECT Panel::get_current_rect() {
+    return get_rect(at_x, at_y, column_width, row_height);
 }
 
-void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
+bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     int thickness   = 2;
     int rect_side   = row_height - 2 * thickness;
     int inside_side = row_height - 6 * thickness;
@@ -1762,7 +1865,7 @@ void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     int name_width = MIN(column_width - rect_side, (name_length + 2) * (Font.advance * Font.scale[font_size]));
     RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
-    bool highlighted = (v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect)) && !sliders.pressing_a_slider;
+    bool highlighted = (v2_inside_rect(mouse_position, get_current_rect())) && !sliders.pressing_a_slider;
 
     Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
     Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
@@ -1773,10 +1876,11 @@ void Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
 
     at_x += column_width;
 
-    if (!left_button_down || handled_press_left) return;
-
-    if (highlighted) *toggled = !(*toggled);
-    return;
+    if (highlighted && left_button_down && !handled_press_left) {
+        *toggled = !(*toggled);
+        return true;
+    }
+    return false;
 }
 
 int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float) {
@@ -1790,8 +1894,7 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
     RECT plus_rect  = get_rect(value_rect.right, at_y + thickness, rect_side,     rect_side);
     RECT name_rect  = get_rect(plus_rect.right,  at_y, (Font.advance * Font.scale[font_size]) * (name_length + 2), rect_side);
 
-    RECT total_rect = {minus_rect.left, minus_rect.top, name_rect.right, name_rect.bottom};
-    bool highlighted = v2_inside_rect(mouse_position, total_rect) && !sliders.pressing_a_slider;
+    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !sliders.pressing_a_slider;
 
     Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
     Color value_color  = highlighted ? palette.highlight_value_color  : palette.value_color;
@@ -1825,14 +1928,13 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 }
 
 void Panel::add_title(char *title, Color c) {
-    RECT title_rect = get_rect(at_x, at_y, base_width, base_height);
-    render_text(title, strlen(title), clamp(font_size + 1, 0, N_SIZES - 1), title_rect, c);
-
-    at_y += 0.5 * row_height;
+    RECT title_rect = get_current_rect();
+    int title_font_size = clamp(font_size + 1, 0, N_SIZES - 1);
+    render_text(title, strlen(title), title_font_size, title_rect, c);
 }
 
 bool Panel::push_header(char *text, Color_Palette palette, bool selected) {
-    RECT text_rect = get_rect(at_x, at_y, column_width, row_height);
+    RECT text_rect = get_current_rect();
     bool highlighted = v2_inside_rect(mouse_position, text_rect) && !sliders.pressing_a_slider;
 
     Color text_color = palette.text_color;
@@ -1851,7 +1953,7 @@ bool Panel::push_header(char *text, Color_Palette palette, bool selected) {
 int Panel::push_button(char *text, Color_Palette palette, int thickness) {
     int text_length  = strlen(text);
 
-    RECT button_rect = get_rect(at_x, at_y, column_width, row_height);
+    RECT button_rect = get_current_rect();
     bool highlighted = v2_inside_rect(mouse_position, button_rect) && !sliders.pressing_a_slider;
 
     Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
@@ -1898,7 +2000,7 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     int slider_position = slider_rect.left + (get_w(slider_rect) - slider_side) * pos;
     RECT pos_rect = get_rect(slider_position, slider_rect.top + thickness, slider_side, slider_side);
     
-    bool highlighted = v2_inside_rect(mouse_position, slider_rect) || v2_inside_rect(mouse_position, text_rect) || slider_is_pressed(slider_order);
+    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) || slider_is_pressed(slider_order);
     if (sliders.pressing_a_slider && !slider_is_pressed(slider_order)) highlighted = false;
     
     Color slider_color = highlighted ? palette.highlight_button_color : palette.button_color;
@@ -1954,7 +2056,7 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
     RECT high_pos_rect = get_rect(high_slider_position, slider_rect.top + thickness, slider_width, slider_height);
     RECT low_pos_rect  = get_rect(low_slider_position,  slider_rect.top + thickness, slider_width, slider_height);
     
-    bool highlighted = v2_inside_rect(mouse_position, slider_rect) || v2_inside_rect(mouse_position, text_rect);
+    bool highlighted = v2_inside_rect(mouse_position, get_current_rect());
     
     float value_float = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
     value_float = clamp(value_float, 0, 1);

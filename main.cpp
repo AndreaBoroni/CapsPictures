@@ -6,7 +6,7 @@ using namespace std;
 
 /* Todo list:
     - Optimize
-    - Make button to swap red and blue
+    - Make button to swap r & B
     - Save with the correct number
 UI:
     - Better rendering in the window
@@ -20,7 +20,7 @@ UI:
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
 
-#define UpDown_(var) ((void *)&(var))
+#define UpDown_(var) ((void *) &(var))
 #define start_sliders() int slider_count = 0;
 #define new_slider()    ++slider_count
 
@@ -49,16 +49,30 @@ struct bitmap
     int32 Width   = 0;
     int32 Height  = 0;
 
-    uint8 *Original = NULL;
+    uint8 *Original  = NULL;
     BITMAPINFO *Info = NULL;
 };
+
+struct RECT_f {
+    float left, top, right, bottom;
+};
+
+RECT rect_from_rectf(RECT_f rect) {
+    RECT result;
+    result.left   = rect.left;
+    result.top    = rect.top;
+    result.right  = rect.right;
+    result.bottom = rect.bottom;
+
+    return result;
+}
 
 struct v2 {
     int x, y;
 };
 
 bitmap     Main_Buffer = {0};
-BITMAPINFO Main_Info = {0};
+BITMAPINFO Main_Info   = {0};
 
 HWND Window = {0};
 
@@ -111,10 +125,7 @@ enum font_types {
 Font_Data Font;
 
 struct Color {
-    int R;
-    int G;
-    int B;
-    int A;
+    int R, G, B, A;
 };
 
 struct Color_hsv {
@@ -674,8 +685,10 @@ void blit_circle_to_bitmap_v2(bitmap *Dest, int circle_index, int x, int y, int 
     }
 }
 
-int get_w(RECT rect) { return rect.right - rect.left; }
+int get_w(RECT rect) { return rect.right  - rect.left; }
 int get_h(RECT rect) { return rect.bottom - rect.top; }
+int get_w(RECT_f rect) { return rect.right  - rect.left; }
+int get_h(RECT_f rect) { return rect.bottom - rect.top; }
 
 void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
     int starting_x = MAX(dest_rect.left, 0);
@@ -846,7 +859,7 @@ struct General_Settings {
 
     float scale = 1.0;
 
-    bool lock_zoom = false;
+    bool lock_zoom = true;
 
     int caps_or_circles = Caps_Style;
     int centers_style = Grid;
@@ -1058,6 +1071,18 @@ void swap_red_and_blue_channels(bitmap *image) {
         uint8 R = (Pixels[p] >>  0) & 0xff;
         
         Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
+    }
+
+    if (image->Original) {
+        uint32 *Pixels = (uint32 *) image->Original;
+        for (int p = 0; p < image->Width * image->Height; p++) {
+            uint8 A = (Pixels[p] >> 24) & 0xff;
+            uint8 B = (Pixels[p] >> 16) & 0xff;
+            uint8 G = (Pixels[p] >>  8) & 0xff;
+            uint8 R = (Pixels[p] >>  0) & 0xff;
+            
+            Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
+        }
     }
 }
 
@@ -1359,25 +1384,6 @@ enum Push_Result {
     Button_Right_Clicked,
 };
 
-int push_button(RECT rect, int side, Color_Palette palette, char *text = "", int font_size = 0) {
-    bool left_press  = (left_button_down  && !handled_press_left);
-    bool right_press = (right_button_down && !handled_press_right);
-    bool highlighted = v2_inside_rect(mouse_position, rect) && !sliders.pressing_a_slider;
-
-    Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
-    Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
-
-    render_filled_rectangle(rect, palette.background_color);
-    render_rectangle(rect, button_color, side);
-    render_text(text, strlen(text), font_size, rect, text_color);
-
-    if (left_press  && highlighted) return Button_Left_Clicked;
-    if (right_press && highlighted) return Button_Right_Clicked;
-    if (highlighted) return Button_Hovered;
-
-    return Button_not_Pressed_nor_Hovered;
-}
-
 Panel make_panel(int x, int y, int height, int width, int font_size) {
     Panel result;
 
@@ -1394,44 +1400,44 @@ Panel make_panel(int x, int y, int height, int width, int font_size) {
     return result;
 }
 
-RECT reset_zoom_rectangle(bitmap image, RECT render_rect) {
+RECT_f reset_zoom_rectangle(bitmap image, RECT render_rect) {
 
     float scale_w = (float) image.Width  / (float) get_w(render_rect);
     float scale_h = (float) image.Height / (float) get_h(render_rect);
 
-    int w = scale_w > scale_h ? image.Width  : get_w(render_rect) * scale_h;
-    int h = scale_w < scale_h ? image.Height : get_h(render_rect) * scale_w;
+    float w = scale_w > scale_h ? image.Width  : get_w(render_rect) * scale_h;
+    float h = scale_w < scale_h ? image.Height : get_h(render_rect) * scale_w;
 
-    int delta_x = (image.Width  - w) / 2;
-    int delta_y = (image.Height - h) / 2;
+    float delta_x = (image.Width  - w) / 2;
+    float delta_y = (image.Height - h) / 2;
 
-    RECT result = {delta_x, delta_y, w + delta_x, h + delta_y};
+    RECT_f result = {delta_x, delta_y, w + delta_x, h + delta_y};
 
     return result;
 }
 
-RECT update_zoom(RECT render_rect, RECT zoom_rect, float delta, v2 zoom_center) {
-    int w = get_w(zoom_rect);
-    int h = get_h(zoom_rect);
+void update_zoom(RECT_f *zoom_rect, RECT render_rect, float delta, v2 zoom_center) {
+    float w = get_w(*zoom_rect);
+    float h = get_h(*zoom_rect);
 
-    int click_x = zoom_center.x - render_rect.left;
-    int click_y = zoom_center.y - render_rect.top;
+    float click_x = zoom_center.x - render_rect.left;
+    float click_y = zoom_center.y - render_rect.top;
 
-    float percentage_x = (float) click_x / (float) get_w(render_rect);
-    float percentage_y = (float) click_y / (float) get_h(render_rect);
+    {
+        float percentage_x = click_x / (float) get_w(render_rect);
+        float percentage_y = click_y / (float) get_h(render_rect);
 
-    int hover_image_x = percentage_x * w + zoom_rect.left;
-    int hover_image_y = percentage_y * h + zoom_rect.top;
+        float hover_image_x = percentage_x * w + zoom_rect->left;
+        float hover_image_y = percentage_y * h + zoom_rect->top;
 
-    w *= (1 + delta);
-    h *= (1 + delta);
+        w *= (1 + delta);
+        h = w * (float) get_h(render_rect) / (float) get_w(render_rect);
 
-    zoom_rect.left   = hover_image_x - w * percentage_x;
-    zoom_rect.right  = hover_image_x + w * (1 - percentage_x);
-    zoom_rect.top    = hover_image_y - h * percentage_y;
-    zoom_rect.bottom = hover_image_y + h * (1 - percentage_y);
-
-    return zoom_rect;
+        zoom_rect->left   = hover_image_x - w * percentage_x;
+        zoom_rect->right  = zoom_rect->left + w;
+        zoom_rect->top    = hover_image_y - h * percentage_y;
+        zoom_rect->bottom = zoom_rect->top + h;
+    }
 }
 
 int get_CPM() {
@@ -1501,7 +1507,7 @@ int main(void) {
     Caps_Conversion_Parameters caps;
     Circles_Conversion_Parameters circles;
 
-    RECT source_zoom_rectangle, processed_zoom_rectangle;
+    RECT_f source_zoom_rectangle, processed_zoom_rectangle;
 
     while (true) {
         start_sliders();
@@ -1539,6 +1545,11 @@ int main(void) {
             apply_contrast(image,   settings.source_contrast);
         }
 
+        source_panel.row(2);
+        if (source_panel.push_button("Swap R & B", default_palette, 2) == Button_Left_Clicked) {
+            if (image.Memory) swap_red_and_blue_channels(&image);
+        }
+
         // Processed Image Panel
         Panel result_panel = make_panel(700, 50, 40, 350, Medium_Font);
         result_panel.current_row(1, 12);
@@ -1560,6 +1571,11 @@ int main(void) {
             if (result_bitmap.Memory) saved_changes = false;
         }
 
+        result_panel.row(2);
+        if (result_panel.push_button("Swap R & B", default_palette, 2) == Button_Left_Clicked) {
+            if (result_bitmap.Memory) swap_red_and_blue_channels(&result_bitmap);
+        }
+
         // Process clicks, mousewheel and render bitmaps
         if (source_button_result == Button_Left_Clicked) {
             char temp_file_name[file_name_size];
@@ -1574,7 +1590,6 @@ int main(void) {
             if (image.Memory && success) {
                 adjust_bpp(&image, Bpp);
                 premultiply_alpha(&image);
-                // swap_red_and_blue_channels(&image);
 
                 if (image.Original) free(image.Original);
                 image.Original = (uint8 *) malloc(image.Width * image.Height * Bytes_Per_Pixel);
@@ -1623,30 +1638,32 @@ int main(void) {
             float delta  = factor * mousewheel_counter;
 
             if (source_button_result == Button_Hovered) {
-                source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta, mouse_position);
+                update_zoom(&source_zoom_rectangle, render_source_rect, delta, mouse_position);
                 if (settings.lock_zoom) {
                     v2 zoom_center = mouse_position;
                     zoom_center.x += (render_processed_rect.left - render_source_rect.left);
-                    processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta, zoom_center);
+                    update_zoom(&processed_zoom_rectangle, render_processed_rect, delta, zoom_center);
                 }
             }
             if (processed_button_result == Button_Hovered) {
-                processed_zoom_rectangle = update_zoom(render_processed_rect, processed_zoom_rectangle, delta, mouse_position);
+                update_zoom(&processed_zoom_rectangle, render_processed_rect, delta, mouse_position);
                 if (settings.lock_zoom) {
                     v2 zoom_center = mouse_position;
                     zoom_center.x += (render_source_rect.left - render_processed_rect.left);
-                    source_zoom_rectangle = update_zoom(render_source_rect, source_zoom_rectangle, delta, zoom_center);
+                    update_zoom(&source_zoom_rectangle, render_source_rect, delta, zoom_center);
                 }
             }
             mousewheel_counter = 0;
         }
         
         if (image.Memory) {
-            render_bitmap_to_screen(&image, render_source_rect, source_zoom_rectangle);
+            RECT zoom = rect_from_rectf(source_zoom_rectangle);
+            render_bitmap_to_screen(&image, render_source_rect, zoom);
         }
 
         if (result_bitmap.Memory) {
-            render_bitmap_to_screen(&result_bitmap, render_processed_rect, processed_zoom_rectangle);
+            RECT zoom = rect_from_rectf(processed_zoom_rectangle);
+            render_bitmap_to_screen(&result_bitmap, render_processed_rect, zoom);
         }
 
         // Settings Panel

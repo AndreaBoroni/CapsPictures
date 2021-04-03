@@ -6,10 +6,10 @@
             "label": "g++.exe build active file",
             "command": "g++.exe",
             "args": [
-                "-g",
+                "-O2",
                 "${file}",
                 "-o",
-                "${fileBasenameNoExtension}.exe",
+                "Caps_Picture.exe",
                 "stb_image.h",
                 "-static-libgcc",
                 "-static-libstdc++",

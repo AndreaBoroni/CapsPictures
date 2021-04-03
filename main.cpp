@@ -342,7 +342,6 @@ void resize_main_buffer(int new_width, int new_height) {
 void blit_main_buffer_to_window() {
     HDC DeviceContext = GetDC(Window);
 
-    // This function requires -lgdi32 to compile
     StretchDIBits(DeviceContext,
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // destination
                   0, 0, Main_Buffer.Width, Main_Buffer.Height, // source
@@ -575,70 +574,16 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 }
 */
 
-void blit_circle_to_bitmap(bitmap *Dest, bitmap *circle, int x, int y, int width, int height, Color color) {
-
-    if (width  < 0) width  = circle->Width;
-    if (height < 0) height = circle->Height;
-
-    int starting_x = MAX(x, 0);
-    int starting_y = MAX(y, 0);
-    int ending_x   = MIN(x + width,  Dest->Width);
-    int ending_y   = MIN(y + height, Dest->Height);
-    
-    if (starting_x > Dest->Width)  return;
-    if (starting_y > Dest->Height) return;
-    if (ending_x < 0) return;
-    if (ending_y < 0) return;
-
-    int x_bitmap, y_bitmap;
-
-    int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
-    uint8 *Row     = (uint8 *)  Dest->Memory;
-    uint32 *Texels = (uint32 *) circle->Memory;
-    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
-
-    float width_scale  = (float) circle->Width  / (float) width;
-    float height_scale = (float) circle->Height / (float) height;
-
-    for (int Y = starting_y; Y < ending_y; Y++) {
-        uint32 *Pixel = (uint32 *)Row;
-        y_bitmap = (Y - y) * height_scale;
-        for (int X = starting_x; X < ending_x; X++) {
-            x_bitmap = (X - x) * width_scale;
-            uint32 source_pixel = Texels[x_bitmap + y_bitmap * circle->Width];
-
-            float SA = ((source_pixel >> 24) & 0xff) / 255.0;
-            uint8 SR = color.R * SA;
-            uint8 SG = color.G * SA;
-            uint8 SB = color.B * SA;
-
-            float DA = ((*Pixel >> 24) & 0xff) / 255.0;
-            uint8 DR =  (*Pixel >> 16) & 0xff;
-            uint8 DG =  (*Pixel >>  8) & 0xff;
-            uint8 DB =  (*Pixel >>  0) & 0xff;
-
-            uint8 A = 255 * (SA + DA - SA*DA);
-            uint8 R = DR * (1 - SA) + SR;
-            uint8 G = DG * (1 - SA) + SG;
-            uint8 B = DB * (1 - SA) + SB;
-
-            *Pixel = (A << 24) | (R << 16) | (G << 8) | B;
-            Pixel++;
-        }
-        Row += Dest_Pitch;
-    }
-}
-
 int circle_dim = 50;
-void blit_circle_to_bitmap_v2(bitmap *Dest, int circle_index, int x, int y, int width, int height, Color color) {
+void blit_circle_to_bitmap(bitmap *Dest, int circle_index, v2 center, int w, Color color) {
 
-    if (width  < 0) width  = circle_dim;
-    if (height < 0) height = circle_dim;
+    int x = center.x - w / 2;
+    int y = center.y - w / 2;
 
     int starting_x = MAX(x, 0);
     int starting_y = MAX(y, 0);
-    int ending_x   = MIN(x + width,  Dest->Width);
-    int ending_y   = MIN(y + height, Dest->Height);
+    int ending_x   = MIN(x + w, Dest->Width);
+    int ending_y   = MIN(y + w, Dest->Height);
     
     if (starting_x > Dest->Width)  return;
     if (starting_y > Dest->Height) return;
@@ -652,8 +597,8 @@ void blit_circle_to_bitmap_v2(bitmap *Dest, int circle_index, int x, int y, int 
     uint32 *Texels = (uint32 *) circle_texture.Memory;
     Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
 
-    float width_scale  = (float) circle_dim / (float) width;
-    float height_scale = (float) circle_dim / (float) height;
+    float width_scale  = (float) circle_dim / (float) w;
+    float height_scale = (float) circle_dim / (float) w;
 
     for (int Y = starting_y; Y < ending_y; Y++) {
         uint32 *Pixel = (uint32 *)Row;
@@ -860,7 +805,7 @@ struct General_Settings {
 
     bool lock_zoom = true;
 
-    int caps_or_circles = Caps_Style;
+    int caps_or_circles = Circles_Style;
     int centers_style = Grid;
     
     // centers_hex is selected
@@ -1260,13 +1205,12 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
     for (int i = 0; i < number_of_centers; i++) {
         float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
         
-        int index = (255.0 - b) / 255.0 * (param.range_high - 1 - param.range_low);
-        if (!param.inverse) index = param.range_high - 1 + param.range_low - index;
+        // lower is less bright
+        int index = b / 255.0 * (param.range_high - 1 - param.range_low);
+        if (param.inverse) index = param.range_high - 1 + param.range_low - index;
         index = clamp(index, param.range_low, param.range_high - 1);
         
-        // blit_circle_to_bitmap(&result_bitmap, &circles_data[index], centers[i].x - dim / 2.0, centers[i].y - dim / 2.0, dim, dim, colors[i]);
-
-        blit_circle_to_bitmap_v2(&result_bitmap, index, centers[i].x - dim / 2.0, centers[i].y - dim / 2.0, dim, dim, colors[i]);
+        blit_circle_to_bitmap(&result_bitmap, index, centers[i], dim, colors[i]);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -1324,7 +1268,6 @@ bool open_file_externally(char *file_name, int size_file_name) {
     dialog_arguments.lpstrInitialDir = NULL;
     dialog_arguments.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
 
-    // This function requires -lComdlg32 to compile
     return GetOpenFileName(&dialog_arguments);
 }
 
@@ -1766,6 +1709,12 @@ int main(void) {
 
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &circles.inverse);
+
+            // settings_panel.row();
+            // settings_panel.push_toggler("Allow Oversize", default_palette, &circles.oversize);
+
+
+
         }
 
         settings_panel.row(1, 0.5);

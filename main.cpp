@@ -6,11 +6,10 @@ using namespace std;
 
 /* Todo list:
     - Optimize
-    - Make button to swap r & B
     - Save with the correct number
 UI:
     - Better rendering in the window
-    - Fix zooming
+    - Fix zooming (mostly fix but not completely, it still shifts some)
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION

@@ -11,6 +11,8 @@
                 "-o",
                 "${fileBasenameNoExtension}.exe",
                 "stb_image.h",
+                "-static-libgcc",
+                "-static-libstdc++",
                 "-lgdi32",
                 "-lComdlg32",
                 "-w",

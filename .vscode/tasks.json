@@ -13,6 +13,7 @@
                 "stb_image.h",
                 "-static-libgcc",
                 "-static-libstdc++",
+                "-static",
                 "-lgdi32",
                 "-lComdlg32",
                 "-w",

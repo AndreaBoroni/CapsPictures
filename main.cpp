@@ -1055,9 +1055,13 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
 
     for (int p = 0; p < image.Width * image.Height; p++) {
         uint8 A = (source[p] >> 24);
-        uint8 R = clamp((int) ((source[p] >> 16) & 0xff) + b, 0, 255);
-        uint8 G = clamp((int) ((source[p] >>  8) & 0xff) + b, 0, 255);
-        uint8 B = clamp((int) ((source[p] >>  0) & 0xff) + b, 0, 255);
+        uint8 R = (source[p] >> 16) & 0xff;
+        uint8 G = (source[p] >>  8) & 0xff;
+        uint8 B = (source[p] >>  0) & 0xff;
+
+        if (R > 0) R = clamp((int) R + b, 0, 255);
+        if (G > 0) G = clamp((int) G + b, 0, 255);
+        if (B > 0) B = clamp((int) B + b, 0, 255);
         
         dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
@@ -1194,12 +1198,7 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = 0;
-        result_bitmap.Memory[i*4 + 1] = 0;
-        result_bitmap.Memory[i*4 + 2] = 0;
-        result_bitmap.Memory[i*4 + 3] = 255;
-    }
+    memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     
     int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
@@ -1452,6 +1451,22 @@ int main(void) {
     RECT_f source_zoom_rectangle, processed_zoom_rectangle;
 
     while (true) {
+
+        int main_border  = 40;
+        int inner_border = 20;
+
+        int available_width = Main_Buffer.Width - main_border * 2 - inner_border * 2;
+        available_width = clamp(available_width, 0, Main_Buffer.Width);
+        int settings_width = clamp(available_width * 0.30, 0, 300);
+        int display_width  = (available_width - settings_width) / 2;
+
+        int available_height = Main_Buffer.Height - main_border * 2;
+        float display_rows = (float) available_height / 40.0 - 3.5;
+
+        int source_left    = main_border;
+        int settings_left  = source_left   + display_width  + inner_border;
+        int processed_left = settings_left + settings_width + inner_border;
+
         start_sliders();
 
         // Handle Messages
@@ -1468,13 +1483,18 @@ int main(void) {
         
         int border = 5;
         // Source Image Panel
-        Panel source_panel = make_panel(50, 50, 40, 350, Medium_Font);
-        source_panel.current_row(1, 12);
+        Panel source_panel = make_panel(source_left, main_border, 40, display_width, Medium_Font);
+        source_panel.current_row(1, display_rows);
 
         RECT s_rect = source_panel.get_current_rect();
         RECT render_source_rect = {s_rect.left + border, s_rect.top + border, s_rect.right - border, s_rect.bottom - border};
         
-        int source_button_result = source_panel.push_button("Load image", default_palette, border);
+        int source_button_result;
+        if (image.Memory) {
+            source_button_result = source_panel.push_button("", default_palette, border);
+        } else {
+            source_button_result = source_panel.push_button("Load image", default_palette, border);
+        }
         source_panel.font_size = Small_Font;
 
         source_panel.row(1, 0.5);
@@ -1493,13 +1513,18 @@ int main(void) {
         }
 
         // Processed Image Panel
-        Panel result_panel = make_panel(700, 50, 40, 350, Medium_Font);
-        result_panel.current_row(1, 12);
+        Panel result_panel = make_panel(processed_left, main_border, 40, display_width, Medium_Font);
+        result_panel.current_row(1, display_rows);
 
         RECT p_rect = result_panel.get_current_rect();
         RECT render_processed_rect = {p_rect.left + border, p_rect.top + border, p_rect.right - border, p_rect.bottom - border};
 
-        int processed_button_result = result_panel.push_button("Process image", default_palette, border);
+        int processed_button_result;
+        if (result_bitmap.Memory) {
+             processed_button_result = result_panel.push_button("", default_palette, border);
+        } else {
+            processed_button_result = result_panel.push_button("Process image", default_palette, border);
+        }
         result_panel.font_size = Small_Font;  
 
         result_panel.row(1, 0.5);
@@ -1609,7 +1634,7 @@ int main(void) {
         }
 
         // Settings Panel
-        Panel settings_panel = make_panel(425, 50, 30, 250, Small_Font);
+        Panel settings_panel = make_panel(settings_left, main_border, 30, settings_width, Small_Font);
         settings_panel.current_row(1, 1.5);
         settings_panel.add_title("Settings", BLUE);
 
@@ -1709,20 +1734,13 @@ int main(void) {
 
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &circles.inverse);
-
-            // settings_panel.row();
-            // settings_panel.push_toggler("Allow Oversize", default_palette, &circles.oversize);
-
-
-
         }
 
         settings_panel.row(1, 0.5);
         settings_panel.row(1, 2);
-        save_palette.background_color = saved_changes ? BLACK : WHITE;
+        save_palette.background_color = saved_changes ? BLACK : GRAY;
         int save_click_result = settings_panel.push_button("Save", save_palette, 5);
         if (save_click_result == Button_Left_Clicked && result_bitmap.Memory) {
-
             int dot_index = get_dot_index(file_name, file_name_size);
             assert(dot_index >= 0);
 
@@ -1960,7 +1978,7 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     int slider_position = slider_rect.left + (get_w(slider_rect) - slider_side) * pos;
     RECT pos_rect = get_rect(slider_position, slider_rect.top + thickness, slider_side, slider_side);
     
-    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) || slider_is_pressed(slider_order);
+    bool highlighted = (v2_inside_rect(mouse_position, get_current_rect()) || slider_is_pressed(slider_order)) && !(left_button_down && handled_press_left);
     if (sliders.pressing_a_slider && !slider_is_pressed(slider_order)) highlighted = false;
     
     Color slider_color = highlighted ? palette.highlight_button_color : palette.button_color;
@@ -1978,14 +1996,16 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
             new_pos = clamp(new_pos, 0, 1);
             *value = min_v + new_pos * (max_v - min_v);
         }
-    } else if (v2_inside_rect(mouse_position, slider_rect)) {
-        sliders.pressing_a_slider = true;
-        sliders.which_slider_is_pressed = slider_order;
-        float new_pos = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
-        new_pos = clamp(new_pos, 0, 1);
-        *value = min_v + new_pos * (max_v - min_v);
-    } else if (v2_inside_rect(mouse_position, text_rect)) {
-        *value = (max_v + min_v) / 2;
+    } else if (!handled_press_left) {
+        if (v2_inside_rect(mouse_position, slider_rect)) {
+            sliders.pressing_a_slider = true;
+            sliders.which_slider_is_pressed = slider_order;
+            float new_pos = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
+            new_pos = clamp(new_pos, 0, 1);
+            *value = min_v + new_pos * (max_v - min_v);
+        } else if (v2_inside_rect(mouse_position, text_rect)) {
+            *value = (max_v + min_v) / 2;
+        }
     }
 
     render_text(*value, Small_Font, pos_rect, value_color);
@@ -2016,7 +2036,7 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
     RECT high_pos_rect = get_rect(high_slider_position, slider_rect.top + thickness, slider_width, slider_height);
     RECT low_pos_rect  = get_rect(low_slider_position,  slider_rect.top + thickness, slider_width, slider_height);
     
-    bool highlighted = v2_inside_rect(mouse_position, get_current_rect());
+    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !(left_button_down && handled_press_left);
     
     float value_float = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
     value_float = clamp(value_float, 0, 1);
@@ -2058,19 +2078,21 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
                 *low_value = MIN(*low_value, min_high);
             }
         }
-    } else if (v2_inside_rect(mouse_position, slider_rect)) {
-        sliders.pressing_a_slider = true;
-        sliders.which_slider_is_pressed = slider_order;
-        if (high_is_closer) {
-            sliders.high_slider_pressed = true;
-            *high_value = value;
-        } else {
-            sliders.high_slider_pressed = false;
-            *low_value = value;
+    } else if (!handled_press_left) {
+        if (v2_inside_rect(mouse_position, slider_rect)) {
+            sliders.pressing_a_slider = true;
+            sliders.which_slider_is_pressed = slider_order;
+            if (high_is_closer) {
+                sliders.high_slider_pressed = true;
+                *high_value = value;
+            } else {
+                sliders.high_slider_pressed = false;
+                *low_value = value;
+            }
+        } else if (v2_inside_rect(mouse_position, text_rect)) {
+            *high_value = max_v;
+            *low_value  = min_v;
         }
-    } else if (v2_inside_rect(mouse_position, text_rect)) {
-        *high_value = max_v;
-        *low_value  = min_v;
     }
 
     at_x += column_width;

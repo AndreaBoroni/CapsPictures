@@ -3,11 +3,34 @@
     "tasks": [
         {
             "type": "shell",
-            "label": "g++.exe build active file",
+            "label": "g++.exe build debug",
+            "command": "g++.exe",
+            "args": [
+                "-g",
+                "main.cpp",
+                "-o",
+                "main.exe",
+                "stb_image.h",
+                "-static-libgcc",
+                "-static-libstdc++",
+                "-static",
+                "-lgdi32",
+                "-lComdlg32",
+                "-w",
+            ],
+            "problemMatcher": [ "$gcc" ],
+            "group": { 
+                "kind": "build",
+                "isDefault": true,
+            }
+        },
+        {
+            "type": "shell",
+            "label": "g++.exe build release",
             "command": "g++.exe",
             "args": [
                 "-O2",
-                "${file}",
+                "main.cpp",
                 "-o",
                 "Caps_Picture.exe",
                 "stb_image.h",
@@ -21,7 +44,7 @@
             "problemMatcher": [ "$gcc" ],
             "group": { 
                 "kind": "build",
-                "isDefault": true,
+                "isDefault": false,
             }
         }
     ]

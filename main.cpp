@@ -823,27 +823,24 @@ struct General_Settings {
     // centers_random is selected
     int total_centers = 100;
     int random_radius = 10;
-};
-General_Settings settings;
 
-struct Caps_Conversion_Parameters {
-    bool inverse  = false;
-    bool by_color = false;
-    bool hard_max = false;
-};
+    // caps style
+    bool inverse_caps = false;
+    bool by_color     = false;
+    bool hard_max     = false;
 
-struct Circles_Conversion_Parameters {
+    // circles style
     int adjusted_brightness = 50;
     int adjusted_hue        = 0;
 
     bool allow_oversizing = false;
-    bool shuffle_centers  = false;
 
     int range_high = Total_Circles_FT;
     int range_low  = 0;
 
-    bool inverse = false;
+    bool inverse_circles = false;
 };
+General_Settings settings;
 
 void shuffle(v2 *array, int array_length, int shuffle_times)
 {
@@ -886,7 +883,7 @@ int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radiu
     return indexes;
 }
 
-int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius, Caps_Conversion_Parameters param) {
+int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius) {
 
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
     assert(indexes);
@@ -910,7 +907,7 @@ int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, 
                              (caps_colors[j].B - B_value) * (caps_colors[j].B - B_value);
             distance /= 3.0 * 255.0 * 255.0;
             
-            if (param.hard_max) {
+            if (settings.hard_max) {
                 distance = MAX((caps_colors[j].R - R_value) * (caps_colors[j].R - R_value), (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value));
                 distance = MAX((caps_colors[j].B - B_value) * (caps_colors[j].B - B_value), distance);
                 distance /= 255.0 * 255.0;
@@ -1123,17 +1120,16 @@ v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
     return centers;
 }
 
-bitmap create_image_caps(bitmap image, Caps_Conversion_Parameters param) {
+bitmap create_image_caps(bitmap image) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
     
-
     int *indexes;
-    if (param.by_color) indexes = compute_indexes_by_color(image, centers, number_of_centers, radius, param);
-    else                indexes = compute_indexes(image, centers, number_of_centers, radius);
+    if (settings.by_color) indexes = compute_indexes_by_color(image, centers, number_of_centers, radius);
+    else                   indexes = compute_indexes(image, centers, number_of_centers, radius);
     
-    if (param.inverse) {
+    if (settings.inverse_caps) {
         for (int i = 0; i < number_of_centers; i++) indexes[i] = Total_Caps - indexes[i] - 1;
     }
 
@@ -1169,11 +1165,11 @@ bitmap create_image_caps(bitmap image, Caps_Conversion_Parameters param) {
     return result_bitmap;
 }
 
-bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
+bitmap create_image_circles(bitmap image) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
-    if (param.shuffle_centers) shuffle(centers, number_of_centers, 100);
+    if (settings.shuffle_centers) shuffle(centers, number_of_centers, 100);
 
     Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 
@@ -1186,12 +1182,12 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
 
         brightnesses[i] = (colors[i].R + colors[i].G + colors[i].B) / 3.0;
 
-        int b = (param.adjusted_brightness - 50) * 255.0 / 49.0;
+        int b = (settings.adjusted_brightness - 50) * 255.0 / 49.0;
         colors[i].R = clamp((int) (colors[i].R + b), 0, 255);
         colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
         colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
 
-        if (param.adjusted_hue) colors[i] = shift_hue(colors[i], param.adjusted_hue);
+        if (settings.adjusted_hue) colors[i] = shift_hue(colors[i], settings.adjusted_hue);
 
         max_brightness = MAX(max_brightness, brightnesses[i]);
         min_brightness = MIN(min_brightness, brightnesses[i]);
@@ -1215,13 +1211,13 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
         float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
         
         // lower is less bright
-        int index = b / 255.0 * (param.range_high - 1 - param.range_low) + param.range_low;
-        if (param.inverse) index = param.range_high - 1 + param.range_low - index;
-        index = clamp(index, param.range_low, param.range_high - 1);
+        int index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
+        if (settings.inverse_circles) index = settings.range_high - 1 + settings.range_low - index;
+        index = clamp(index, settings.range_low, settings.range_high - 1);
 
         int w = dim;
         if (index >= Total_Circles_FT) {
-            assert(param.allow_oversizing);
+            assert(settings.allow_oversizing);
             w = dim * index / Total_Circles_FT;
             index = Total_Circles_FT - 1;
         }
@@ -1462,9 +1458,6 @@ int main(void) {
     bitmap image = {0};
     bitmap result_bitmap = {0};
 
-    Caps_Conversion_Parameters caps;
-    Circles_Conversion_Parameters circles;
-
     RECT_f source_zoom_rectangle, processed_zoom_rectangle;
 
     while (true) {
@@ -1601,10 +1594,10 @@ int main(void) {
                 free(result_bitmap.Original);
 
                 if (settings.caps_or_circles == Caps_Style) {
-                    result_bitmap = create_image_caps(image, caps);
+                    result_bitmap = create_image_caps(image);
                 } else {
                     assert(settings.caps_or_circles == Circles_Style);
-                    result_bitmap = create_image_circles(image, circles);
+                    result_bitmap = create_image_circles(image);
                 }
 
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
@@ -1727,42 +1720,42 @@ int main(void) {
         settings_panel.row(1, 0.25);
         if (settings.caps_or_circles == Caps_Style) {
             settings_panel.row();
-            settings_panel.push_toggler("Invert", default_palette, &caps.inverse);
+            settings_panel.push_toggler("Invert", default_palette, &settings.inverse_caps);
             
             settings_panel.row();
-            settings_panel.push_toggler("By Color", default_palette, &caps.by_color);
-            if (caps.by_color) {
+            settings_panel.push_toggler("By Color", default_palette, &settings.by_color);
+            if (settings.by_color) {
                 settings_panel.row();
                 settings_panel.indent(0.05);
-                settings_panel.push_toggler("Hard Max", default_palette, &caps.hard_max);
+                settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
         } else {
             assert(settings.caps_or_circles == Circles_Style);
             
             settings_panel.row();
-            settings_panel.push_slider("Brightness", slider_palette, &circles.adjusted_brightness, 1, 99, new_slider());
+            settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
 
             settings_panel.row();
-            settings_panel.push_slider("Hue Shift", slider_palette, &circles.adjusted_hue, -180, 180, new_slider());
+            settings_panel.push_slider("Hue Shift", slider_palette, &settings.adjusted_hue, -180, 180, new_slider());
 
             settings_panel.row();
-            settings_panel.push_toggler("Allow Oversizing", default_palette, &circles.allow_oversizing);
+            settings_panel.push_toggler("Allow Oversizing", default_palette, &settings.allow_oversizing);
 
-            if (circles.allow_oversizing && settings.centers_style == Grid) {
+            if (settings.allow_oversizing && settings.centers_style == Grid) {
                 settings_panel.row();
                 settings_panel.indent(0.05);
-                settings_panel.push_toggler("Shuffle Centers", default_palette, &circles.shuffle_centers);
+                settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
             }
 
-            int max_range = circles.allow_oversizing ? Total_Circles_FT * SQRT_2 + 5 : Total_Circles_FT;
-            circles.range_high = clamp(circles.range_high, 0, max_range);
+            int max_range = settings.allow_oversizing ? Total_Circles_FT * SQRT_2 + 5 : Total_Circles_FT;
+            settings.range_high = clamp(settings.range_high, 0, max_range);
 
             settings_panel.row();
-            settings_panel.push_double_slider("Range", slider_palette, &circles.range_low, &circles.range_high, 0, max_range, new_slider());
+            settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
 
             settings_panel.row();
-            settings_panel.push_toggler("Invert", default_palette, &circles.inverse);
+            settings_panel.push_toggler("Invert", default_palette, &settings.inverse_circles);
         }
 
         settings_panel.row(1, 0.5);

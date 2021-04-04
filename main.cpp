@@ -1207,7 +1207,7 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
         float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
         
         // lower is less bright
-        int index = b / 255.0 * (param.range_high - 1 - param.range_low);
+        int index = b / 255.0 * (param.range_high - 1 - param.range_low) + param.range_low;
         if (param.inverse) index = param.range_high - 1 + param.range_low - index;
         index = clamp(index, param.range_low, param.range_high - 1);
 

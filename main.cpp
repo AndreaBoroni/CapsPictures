@@ -839,6 +839,8 @@ struct General_Settings {
     int range_low  = 0;
 
     bool inverse_circles = false;
+
+    Color bg_color = BLACK;
 };
 General_Settings settings;
 
@@ -1145,10 +1147,10 @@ bitmap create_image_caps(bitmap image) {
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
     for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = 0;
-        result_bitmap.Memory[i*4 + 1] = 0;
-        result_bitmap.Memory[i*4 + 2] = 0;
-        result_bitmap.Memory[i*4 + 3] = 255;
+        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
     }
     
     int dim = 2 * radius * settings.scale;
@@ -1200,10 +1202,10 @@ bitmap create_image_circles(bitmap image) {
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
     for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = 0;
-        result_bitmap.Memory[i*4 + 1] = 0;
-        result_bitmap.Memory[i*4 + 2] = 0;
-        result_bitmap.Memory[i*4 + 3] = 255;
+        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
     }
     
     int dim = 2 * radius * settings.scale;
@@ -1327,6 +1329,7 @@ struct Panel {
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
     bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order);
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
+    bool push_color_picker(char *text, Color_Palette palette, Color color);
     bool push_header(char *text, Color_Palette palette, int header, int *current_header);
     void add_title(char *title, Color c);
 };
@@ -1348,7 +1351,8 @@ Panel make_panel(int x, int y, int height, int width, int font_size) {
     result.base_width  = width;
     result.base_height = height;
 
-    result.row_height = height;
+    result.row_height   = height;
+    result.column_width = width;
 
     result.font_size = font_size;
     return result;
@@ -1459,9 +1463,11 @@ int main(void) {
     bitmap result_bitmap = {0};
 
     RECT_f source_zoom_rectangle, processed_zoom_rectangle;
+    bool color_picker_active = false;
 
     while (true) {
 
+        // Compute sizes
         int main_border  = 40;
         int inner_border = 20;
 
@@ -1601,7 +1607,7 @@ int main(void) {
                 }
 
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
-                source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
+                source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
                 
                 saved_changes = false;
             }
@@ -1632,6 +1638,12 @@ int main(void) {
             }
             mousewheel_counter = 0;
         }
+
+        // if (changed_size) {
+        //     source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
+        //     processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+        //     changed_size = false;
+        // }
         
         if (image.Memory) {
             RECT zoom = rect_from_rectf(source_zoom_rectangle);
@@ -1709,8 +1721,8 @@ int main(void) {
         settings_panel.row();
         float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(settings.scale), true);
         if (settings.scale >= 2) scale_press *= 0.5;
-        else                 scale_press *= 0.1;
-        settings.scale = MAX(0.1, settings.scale + scale_press);
+        else                     scale_press *= 0.1;
+        settings.scale = clamp(settings.scale + scale_press, 0.1, 10);
         
         settings_panel.row(1, 0.5);
         settings_panel.row(2);
@@ -1815,6 +1827,35 @@ int main(void) {
             if (image.Memory)         source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
         }
 
+        settings_panel.row();
+        color_picker_active ^= settings_panel.push_color_picker("Background", default_palette, settings.bg_color);
+
+        if (color_picker_active) {
+            settings_panel.row(1, 0.1);            
+            settings_panel.row();            
+            RECT at_rect = settings_panel.get_current_rect();
+            RECT color_picker_rect = {at_rect.left, at_rect.top, at_rect.right, at_rect.top + 170};
+            render_filled_rectangle(color_picker_rect, BLACK);
+            render_rectangle(color_picker_rect, WHITE, 5);
+
+            Panel color_picker = make_panel(color_picker_rect.left + 10, color_picker_rect.top, 30, settings_width - 20, Small_Font);
+            color_picker.current_row(1, 0.2);
+
+            color_picker.row(1, 0.1);
+            color_picker.row();
+            color_picker.push_slider("R", slider_palette, &settings.bg_color.R, 0, 255, new_slider());
+            color_picker.row();
+            color_picker.push_slider("G", slider_palette, &settings.bg_color.G, 0, 255, new_slider());
+            color_picker.row();
+            color_picker.push_slider("B", slider_palette, &settings.bg_color.B, 0, 255, new_slider());
+            color_picker.row();
+            color_picker.push_slider("A", slider_palette, &settings.bg_color.A, 0, 255, new_slider());
+
+            color_picker.row(2);
+            if (color_picker.push_button("Reset", default_palette) == Button_Left_Clicked) settings.bg_color   = BLACK;
+            if (color_picker.push_button("Done",  default_palette) == Button_Left_Clicked) color_picker_active = false;
+        }
+
         handled_press_left  = true;
         handled_press_right = true;
         blit_main_buffer_to_window();
@@ -1858,8 +1899,8 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
 
     int name_length = strlen(name);
-    int name_width = (name_length + 2) * (Font.advance * Font.scale[font_size]);
-    RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
+    int name_width  = (name_length + 2) * (Font.advance * Font.scale[font_size]);
+    RECT name_rect  = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
     bool hovering = v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect);
     bool highlighted = hovering && !sliders.pressing_a_slider;
@@ -1971,6 +2012,36 @@ int Panel::push_button(char *text, Color_Palette palette, int thickness) {
     if (highlighted)                                              return Button_Hovered;
 
     return Button_not_Pressed_nor_Hovered;
+}
+
+bool Panel::push_color_picker(char *name, Color_Palette palette, Color color) {
+    int thickness   = 2;
+    int rect_side   = row_height - 2 * thickness;
+    int inside_side = row_height - 6 * thickness;
+
+    RECT color_rect  = get_rect(at_x + thickness, at_y + thickness, rect_side, rect_side);
+    RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
+
+    int name_length = strlen(name);
+    int name_width  = (name_length + 2) * (Font.advance * Font.scale[font_size]);
+    RECT name_rect  = get_rect(at_x + rect_side, at_y, name_width, row_height);
+
+    bool hovering = v2_inside_rect(mouse_position, color_rect) || v2_inside_rect(mouse_position, name_rect);
+    bool highlighted = hovering && !sliders.pressing_a_slider;
+
+    Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
+    Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
+
+    render_rectangle(color_rect, button_color, thickness);
+    render_filled_rectangle(inside_rect, color);
+    render_text(name, name_length, font_size, name_rect, text_color);
+
+    at_x += column_width;
+
+    if (highlighted && left_button_down && !handled_press_left) {
+        return true;
+    }
+    return false;
 }
 
 bool slider_is_pressed(int index) {

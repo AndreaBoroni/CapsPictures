@@ -79,7 +79,7 @@ bool left_button_down    = false;
 bool right_button_down   = false;
 
 int mousewheel_counter = 0;
-v2  mouse_position     = {0};
+v2  mouse_position     = {0, 0};
 
 bool handled_press_left  = false;
 bool handled_press_right = false;
@@ -217,17 +217,17 @@ struct Color_Palette {
     Color background_color;
 };
 
-Color_Palette default_palette = {DARK_WHITE, WHITE, BLUE,  BLUE,  DARK_BLUE, BLUE, BLACK};
-Color_Palette slider_palette  = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE, BLACK};
-Color_Palette save_palette    = {DARK_BLUE,  BLUE,  BLACK, BLACK, BLUE,      BLUE, BLACK};
-Color_Palette header_palette  = {LIGHT_GRAY, WHITE, BLACK, BLACK, BLACK,     BLUE, GRAY};
+Color_Palette default_palette = {DARK_WHITE, WHITE, BLUE,  BLUE,  DARK_BLUE, BLUE,  BLACK};
+Color_Palette slider_palette  = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE,  BLACK};
+Color_Palette header_palette  = {LIGHT_GRAY, WHITE, BLACK, BLACK, BLACK,     BLUE,  GRAY};
+Color_Palette save_palette    = {DARK_WHITE, WHITE, BLACK, BLACK, BLACK,     BLACK, BLUE};
+Color_Palette no_save_palette = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE,  BLACK};
 
 const int Packed_Font_W = 500;
 const int Packed_Font_H = 500;
 
 RECT get_rect(int x, int y, int width, int height) {
-    RECT result = {x, y, x + width, y + height};
-    return result;
+    return {x, y, x + width, y + height};
 }
 
 void init_font(int sizes[])
@@ -629,8 +629,8 @@ void blit_circle_to_bitmap(bitmap *Dest, int circle_index, v2 center, int w, Col
     }
 }
 
-int get_w(RECT rect) { return rect.right  - rect.left; }
-int get_h(RECT rect) { return rect.bottom - rect.top; }
+int get_w(RECT rect)   { return rect.right  - rect.left; }
+int get_h(RECT rect)   { return rect.bottom - rect.top; }
 int get_w(RECT_f rect) { return rect.right  - rect.left; }
 int get_h(RECT_f rect) { return rect.bottom - rect.top; }
 
@@ -834,6 +834,8 @@ struct Caps_Conversion_Parameters {
 struct Circles_Conversion_Parameters {
     int adjusted_brightness = 50;
     int adjusted_hue        = 0;
+
+    bool allow_oversizing = false;
 
     int range_high = Total_Circles_FT;
     int range_low  = 0;
@@ -1730,6 +1732,9 @@ int main(void) {
             settings_panel.push_slider("Hue Shift", slider_palette, &circles.adjusted_hue, -180, 180, new_slider());
 
             settings_panel.row();
+            settings_panel.push_toggler("Allow Oversizing", default_palette, &circles.allow_oversizing);
+
+            settings_panel.row();
             settings_panel.push_double_slider("Range", slider_palette, &circles.range_low, &circles.range_high, 0, Total_Circles_FT, new_slider());
 
             settings_panel.row();
@@ -1738,8 +1743,8 @@ int main(void) {
 
         settings_panel.row(1, 0.5);
         settings_panel.row(1, 2);
-        save_palette.background_color = saved_changes ? BLACK : GRAY;
-        int save_click_result = settings_panel.push_button("Save", save_palette, 5);
+        Color_Palette palette = saved_changes ? no_save_palette : save_palette;
+        int save_click_result = settings_panel.push_button("Save", palette, 3);
         if (save_click_result == Button_Left_Clicked && result_bitmap.Memory) {
             int dot_index = get_dot_index(file_name, file_name_size);
             assert(dot_index >= 0);
@@ -1836,10 +1841,11 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
 
     int name_length = strlen(name);
-    int name_width = MIN(column_width - rect_side, (name_length + 2) * (Font.advance * Font.scale[font_size]));
+    int name_width = (name_length + 2) * (Font.advance * Font.scale[font_size]);
     RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
-    bool highlighted = (v2_inside_rect(mouse_position, get_current_rect())) && !sliders.pressing_a_slider;
+    bool hovering = v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect);
+    bool highlighted = hovering && !sliders.pressing_a_slider;
 
     Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
     Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;

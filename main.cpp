@@ -1210,8 +1210,15 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
         int index = b / 255.0 * (param.range_high - 1 - param.range_low);
         if (param.inverse) index = param.range_high - 1 + param.range_low - index;
         index = clamp(index, param.range_low, param.range_high - 1);
+
+        int w = dim;
+        if (index >= Total_Circles_FT) {
+            assert(param.allow_oversizing);
+            w = dim * index / Total_Circles_FT;
+            index = Total_Circles_FT - 1;
+        }
         
-        blit_circle_to_bitmap(&result_bitmap, index, centers[i], dim, colors[i]);
+        blit_circle_to_bitmap(&result_bitmap, index, centers[i], w, colors[i]);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -1734,8 +1741,11 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &circles.allow_oversizing);
 
+            int max_range = circles.allow_oversizing ? Total_Circles_FT * SQRT_2 + 1 : Total_Circles_FT;
+            circles.range_high = clamp(circles.range_high, 0, max_range);
+
             settings_panel.row();
-            settings_panel.push_double_slider("Range", slider_palette, &circles.range_low, &circles.range_high, 0, Total_Circles_FT, new_slider());
+            settings_panel.push_double_slider("Range", slider_palette, &circles.range_low, &circles.range_high, 0, max_range, new_slider());
 
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &circles.inverse);

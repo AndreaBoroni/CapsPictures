@@ -8,6 +8,7 @@ using namespace std;
     - Optimize
     - Save with the correct number
 UI:
+    - Render circles by brightness
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
 */
@@ -836,6 +837,7 @@ struct Circles_Conversion_Parameters {
     int adjusted_hue        = 0;
 
     bool allow_oversizing = false;
+    bool shuffle_centers  = false;
 
     int range_high = Total_Circles_FT;
     int range_low  = 0;
@@ -1171,6 +1173,7 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
+    if (param.shuffle_centers) shuffle(centers, number_of_centers, 100);
 
     Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 
@@ -1200,7 +1203,12 @@ bitmap create_image_circles(bitmap image, Circles_Conversion_Parameters param) {
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    memset(result_bitmap.Memory, 0, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+        result_bitmap.Memory[i*4 + 0] = 0;
+        result_bitmap.Memory[i*4 + 1] = 0;
+        result_bitmap.Memory[i*4 + 2] = 0;
+        result_bitmap.Memory[i*4 + 3] = 255;
+    }
     
     int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
@@ -1741,7 +1749,13 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &circles.allow_oversizing);
 
-            int max_range = circles.allow_oversizing ? Total_Circles_FT * SQRT_2 + 1 : Total_Circles_FT;
+            if (circles.allow_oversizing && settings.centers_style == Grid) {
+                settings_panel.row();
+                settings_panel.indent(0.05);
+                settings_panel.push_toggler("Shuffle Centers", default_palette, &circles.shuffle_centers);
+            }
+
+            int max_range = circles.allow_oversizing ? Total_Circles_FT * SQRT_2 + 5 : Total_Circles_FT;
             circles.range_high = clamp(circles.range_high, 0, max_range);
 
             settings_panel.row();

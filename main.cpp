@@ -168,12 +168,12 @@ Color_hsv rgb_to_hsv(Color c) {
 
 Color hsv_to_rgb(Color_hsv c) {
 
-    if (c.s == 0) return {c.v, c.v, c.v, c.alpha};
+    uint8 v = c.v * 255;
+    if (c.s == 0) return {v, v, v, c.alpha};
 
     c.h /= 60; 
     int sector = floor(c.h);
     float diff = c.h - sector;
-    uint8 v = c.v * 255;
     uint8 p = v * (1.0 - c.s);
     uint8 q = v * (1.0 - c.s * diff);
     uint8 t = v * (1.0 - c.s * (1.0 - diff));
@@ -609,6 +609,7 @@ void blit_circle_to_bitmap(bitmap *Dest, int circle_index, v2 center, int w, Col
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * circle_texture.Width + circle_index * circle_dim];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            // float SA = 1.0;
             uint8 SR = color.R * SA;
             uint8 SG = color.G * SA;
             uint8 SB = color.B * SA;
@@ -806,8 +807,11 @@ struct General_Settings {
 
     bool lock_zoom = true;
 
-    int caps_or_circles = Circles_Style;
     int centers_style = Grid;
+    bool centers_settings_visible = true;
+
+    int caps_or_circles = Circles_Style;
+    bool style_settings_visible = true;
     
     // centers_hex is selected
     int x_hex  = 10;
@@ -821,7 +825,7 @@ struct General_Settings {
     int width  = 20;
 
     // centers_random is selected
-    int total_centers = 100;
+    int total_centers = 2000;
     int random_radius = 10;
 
     // caps style
@@ -841,6 +845,7 @@ struct General_Settings {
     bool inverse_circles = false;
 
     Color bg_color = BLACK;
+    bool use_original_as_background;
 };
 General_Settings settings;
 
@@ -1046,6 +1051,18 @@ void premultiply_alpha(bitmap *image) {
     }
 }
 
+void invert_alpha(bitmap *image) {
+    uint32 *Pixels = (uint32 *) image->Memory;
+    for (int p = 0; p < image->Width * image->Height; p++) {
+        uint8 A = 255 - ((Pixels[p] >> 24) & 0xff);
+        uint8 R = ((Pixels[p] >> 16) & 0xff);
+        uint8 G = ((Pixels[p] >>  8) & 0xff);
+        uint8 B = ((Pixels[p] >>  0) & 0xff);
+        
+        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
+    }
+}
+
 void apply_brightness(bitmap image, int brightness, bool use_original_as_source = false) {
     if (brightness == 50 && !use_original_as_source) return;
 
@@ -1201,11 +1218,15 @@ bitmap create_image_circles(bitmap image) {
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
-        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
-        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
-        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+    if (!settings.use_original_as_background) {
+        for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+            result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+            result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+            result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+            result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+        }
+    } else {
+        blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
     
     int dim = 2 * radius * settings.scale;
@@ -1223,6 +1244,9 @@ bitmap create_image_circles(bitmap image) {
             w = dim * index / Total_Circles_FT;
             index = Total_Circles_FT - 1;
         }
+        // } else {
+        //     w = dim * index / Total_Circles_FT;
+        // }
         
         blit_circle_to_bitmap(&result_bitmap, index, centers[i], w, colors[i]);
     }
@@ -1440,10 +1464,11 @@ int main(void) {
     
     int Bpp;
     string filepath = "Circles/circles_texture_50.png";
+    // string filepath = "Circles/diamonds.png";
+    // invert_alpha(&circle_texture);
     circle_texture.Memory = stbi_load(filepath.c_str(), &circle_texture.Width, &circle_texture.Height, &Bpp, Bytes_Per_Pixel);
     assert(circle_texture.Memory);
     assert(Bpp == Bytes_Per_Pixel);
-
     // for (int i = 0; i < 50; i++) {
     //     for (int j = 1050; j < 1070; j++) {
     //         for (int b = 0; b < 4; b++) {
@@ -1662,12 +1687,14 @@ int main(void) {
 
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
-        settings_panel.push_header("Grid", header_palette, Grid,      &settings.centers_style);
-        settings_panel.push_header("Hex",  header_palette, Hexagonal, &settings.centers_style);
-        settings_panel.push_header("Rnd",  header_palette, Random,    &settings.centers_style);
-        settings_panel.row(1, 0.25);
+        bool centers_header_pushed = false;
+        centers_header_pushed |= settings_panel.push_header("Grid", header_palette, Grid,      &settings.centers_style);
+        centers_header_pushed |= settings_panel.push_header("Hex",  header_palette, Hexagonal, &settings.centers_style);
+        centers_header_pushed |= settings_panel.push_header("Rnd",  header_palette, Random,    &settings.centers_style);
+        if (centers_header_pushed) settings.centers_settings_visible = !settings.centers_settings_visible;
 
-        if (settings.centers_style == Hexagonal) {
+        if (settings.centers_style == Hexagonal && settings.centers_settings_visible) {
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             int radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.radius));
             settings.radius = MAX(1, settings.radius + radius_press);
@@ -1686,7 +1713,8 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
 
-        } else if (settings.centers_style == Grid) {
+        } else if (settings.centers_style == Grid && settings.centers_settings_visible) {
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             int width_press = settings_panel.push_updown_counter("Width", default_palette, UpDown_(settings.width));
             settings.width = MAX(1, settings.width + width_press);
@@ -1701,8 +1729,8 @@ int main(void) {
             int y_grid_press = settings_panel.push_updown_counter("Vertical", default_palette, UpDown_(settings.y_grid));
             settings.y_grid = MAX(1, settings.y_grid + y_grid_press);
             if (y_grid_press != 0) compute_dimensions_from_y_grid(image);
-        } else {
-            assert(settings.centers_style == Random);
+        } else if (settings.centers_style == Random && settings.centers_settings_visible) {
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             int random_radius_press = settings_panel.push_updown_counter("Radius", default_palette, UpDown_(settings.random_radius));
             settings.random_radius = MAX(1, settings.random_radius + random_radius_press);
@@ -1718,19 +1746,23 @@ int main(void) {
             settings.total_centers = MAX(1, settings.total_centers + total_circles_press * 10);
         }
 
-        settings_panel.row();
-        float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(settings.scale), true);
-        if (settings.scale >= 2) scale_press *= 0.5;
-        else                     scale_press *= 0.1;
-        settings.scale = clamp(settings.scale + scale_press, 0.1, 10);
+        if (settings.centers_settings_visible) {
+            settings_panel.row();
+            float scale_press = settings_panel.push_updown_counter("Scale", default_palette, UpDown_(settings.scale), true);
+            if (settings.scale >= 2) scale_press *= 0.5;
+            else                     scale_press *= 0.1;
+            settings.scale = clamp(settings.scale + scale_press, 0.1, 10);
+        }
         
         settings_panel.row(1, 0.5);
         settings_panel.row(2);
-        settings_panel.push_header("Caps", header_palette,    Caps_Style,    &settings.caps_or_circles);
-        settings_panel.push_header("Circles", header_palette, Circles_Style, &settings.caps_or_circles);
+        bool style_header_pushed = false;
+        style_header_pushed |= settings_panel.push_header("Caps", header_palette,    Caps_Style,    &settings.caps_or_circles);
+        style_header_pushed |= settings_panel.push_header("Circles", header_palette, Circles_Style, &settings.caps_or_circles);
+        if (style_header_pushed) settings.style_settings_visible = !settings.style_settings_visible;
 
-        settings_panel.row(1, 0.25);
-        if (settings.caps_or_circles == Caps_Style) {
+        if (settings.caps_or_circles == Caps_Style && settings.style_settings_visible) {
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &settings.inverse_caps);
             
@@ -1742,9 +1774,8 @@ int main(void) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
-        } else {
-            assert(settings.caps_or_circles == Circles_Style);
-            
+        } else if (settings.caps_or_circles == Circles_Style && settings.style_settings_visible) {
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
 
@@ -1781,7 +1812,7 @@ int main(void) {
             char save_file_name[file_name_size + 3];
             strncpy(save_file_name, file_name, dot_index);
 
-            int success = 0;
+            bool success = false;
 
             swap_red_and_blue_channels(&result_bitmap);
 
@@ -1790,21 +1821,21 @@ int main(void) {
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".png");
                 int pitch = Bytes_Per_Pixel * result_bitmap.Width;
-                success = stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, pitch);
+                success |= stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, pitch);
             }
             
             if (settings.save_as_bmp) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".bmp");
-                success = stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
+                success |= stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
             }
 
             if (settings.save_as_jpg) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());
                 strcat(save_file_name, ".jpg");
-                success = stbi_write_jpg(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, 100);
+                success |= stbi_write_jpg(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, 100);
             }
             swap_red_and_blue_channels(&result_bitmap);
 
@@ -1827,8 +1858,9 @@ int main(void) {
             if (image.Memory)         source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
         }
 
-        settings_panel.row();
+        settings_panel.row(2);
         color_picker_active ^= settings_panel.push_color_picker("Background", default_palette, settings.bg_color);
+        settings_panel.push_toggler("Original", default_palette, &settings.use_original_as_background);
 
         if (color_picker_active) {
             settings_panel.row(1, 0.1);            
@@ -1986,8 +2018,8 @@ bool Panel::push_header(char *text, Color_Palette palette, int header, int *curr
     at_x += column_width;
 
     if (highlighted && left_button_down && !handled_press_left) {
-        *current_header = header;
-        return true;
+        if (*current_header == header) return true;
+       *current_header = header;
     }
     return false;
 }

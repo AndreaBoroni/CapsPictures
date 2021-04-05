@@ -811,7 +811,7 @@ struct General_Settings {
     bool centers_settings_visible = true;
 
     int caps_or_circles = Circles_Style;
-    bool style_settings_visible = true;
+    bool style_settings_visible = false;
     
     // centers_hex is selected
     int x_hex  = 10;
@@ -827,6 +827,8 @@ struct General_Settings {
     // centers_random is selected
     int total_centers = 2000;
     int random_radius = 10;
+    bool render_centers_by_brightness = false;
+    bool by_brightness_reverse        = false;
 
     // caps style
     bool inverse_caps = false;
@@ -849,8 +851,7 @@ struct General_Settings {
 };
 General_Settings settings;
 
-void shuffle(v2 *array, int array_length, int shuffle_times)
-{
+void shuffle(v2 *array, int array_length, int shuffle_times) {
     for (int i = 0; i < shuffle_times; i++) {
         for (int v = 0; v < array_length - 1; v++) {
             if (rand() % 2 == 0) {
@@ -859,6 +860,30 @@ void shuffle(v2 *array, int array_length, int shuffle_times)
                 array[v + 1] = temp;
             }
         } 
+    }
+}
+
+void sort_by_birghtness(v2 *centers, Color *colors, float *brightness, int length, bool reverse) {
+
+    for (int i = 0; i < length-1; i++) {
+        for (int j = 0; j < length-1-i; j++) {
+            bool condition = brightness[j] > brightness[j+1];
+            if (reverse) condition = brightness[j] < brightness[j+1];
+
+            if (condition) {
+                v2 temp_v = centers[j];
+                centers[j]   = centers[j+1];
+                centers[j+1] = temp_v;
+
+                float temp_b = brightness[j];
+                brightness[j]   = brightness[j+1];
+                brightness[j+1] = temp_b;
+
+                Color temp_c = colors[j];
+                colors[j]   = colors[j+1];
+                colors[j+1] = temp_c;
+            }
+        }
     }
 }
 
@@ -1210,6 +1235,10 @@ bitmap create_image_circles(bitmap image) {
 
         max_brightness = MAX(max_brightness, brightnesses[i]);
         min_brightness = MIN(min_brightness, brightnesses[i]);
+    }
+
+    if (settings.render_centers_by_brightness) {
+        sort_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.by_brightness_reverse);
     }
     
     bitmap result_bitmap;
@@ -1742,8 +1771,16 @@ int main(void) {
             } else {
                 total_circles_press = settings_panel.push_updown_counter("Circles", default_palette, UpDown_(settings.total_centers));
             }
-
             settings.total_centers = MAX(1, settings.total_centers + total_circles_press * 10);
+
+            settings_panel.row();
+            settings_panel.push_toggler("By Brightness", default_palette, &settings.render_centers_by_brightness);
+
+            if (settings.render_centers_by_brightness) {
+                settings_panel.row();
+                settings_panel.indent(0.05);
+                settings_panel.push_toggler("Reverse", default_palette, &settings.by_brightness_reverse);
+            }
         }
 
         if (settings.centers_settings_visible) {
@@ -1792,6 +1829,7 @@ int main(void) {
             }
 
             int max_range = settings.allow_oversizing ? Total_Circles_FT * SQRT_2 + 5 : Total_Circles_FT;
+            settings.range_low  = clamp(settings.range_low,  0, max_range);
             settings.range_high = clamp(settings.range_high, 0, max_range);
 
             settings_panel.row();
@@ -1815,7 +1853,6 @@ int main(void) {
             bool success = false;
 
             swap_red_and_blue_channels(&result_bitmap);
-
             if (settings.save_as_png) {
                 save_file_name[dot_index] = '\0';
                 strcat(save_file_name, to_string(save_counter).c_str());

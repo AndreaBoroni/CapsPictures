@@ -19,6 +19,7 @@ UI:
 #include "stb_image.h"
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "stb_truetype.h"
+#include "gif.h"
 
 #define UpDown_(var) ((void *) &(var))
 #define start_sliders() int slider_count = 0;
@@ -1692,12 +1693,6 @@ int main(void) {
             }
             mousewheel_counter = 0;
         }
-
-        // if (changed_size) {
-        //     source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
-        //     processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
-        //     changed_size = false;
-        // }
         
         if (image.Memory) {
             RECT zoom = rect_from_rectf(source_zoom_rectangle);
@@ -1837,6 +1832,52 @@ int main(void) {
 
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &settings.inverse_circles);
+        }
+
+        settings_panel.row(1, 0.5);
+        settings_panel.row(1, 1.5);
+        int gif_press = settings_panel.push_button("Make GIF", default_palette, 3);
+        if (gif_press == Button_Left_Clicked) {
+
+            int dot_index = get_dot_index(file_name, file_name_size);
+            assert(dot_index >= 0);
+
+            char save_file_name[file_name_size + 3];
+            strncpy(save_file_name, file_name, dot_index);
+
+            save_file_name[dot_index] = '\0';
+            strcat(save_file_name, to_string(save_counter).c_str());
+            strcat(save_file_name, ".gif");
+
+            free(result_bitmap.Memory);
+            free(result_bitmap.Original);
+
+            if (settings.caps_or_circles == Caps_Style) {
+                result_bitmap = create_image_caps(image);
+            } else {
+                assert(settings.caps_or_circles == Circles_Style);
+                result_bitmap = create_image_circles(image);
+            }
+
+            GifWriter writer = {};
+            GifBegin(&writer, save_file_name, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+
+            for (int i = 0; i < 16; i++) {
+                free(result_bitmap.Memory);
+                free(result_bitmap.Original);
+
+                if (settings.caps_or_circles == Caps_Style) {
+                    result_bitmap = create_image_caps(image);
+                } else {
+                    assert(settings.caps_or_circles == Circles_Style);
+                    result_bitmap = create_image_circles(image);
+                }
+                swap_red_and_blue_channels(&result_bitmap);
+                GifWriteFrame(&writer, result_bitmap.Memory, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+            }
+            swap_red_and_blue_channels(&result_bitmap);
+
+            GifEnd(&writer);
         }
 
         settings_panel.row(1, 0.5);

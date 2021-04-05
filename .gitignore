@@ -1,5 +1,6 @@
 $ cat .gitignore
 *.jpg
+*.jpeg
 *.bmp
 *.png
 *.gif

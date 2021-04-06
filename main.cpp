@@ -584,7 +584,7 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 */
 
 int texture_dim = 50;
-void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index) {
+void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index, bool invert_alpha) {
 
     int x = center.x - w / 2;
     int y = center.y - w / 2;
@@ -617,6 +617,7 @@ void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, C
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * textures[texture_index].texture.Width + element_index * texture_dim];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            if (invert_alpha) SA = 1 - SA;
             uint8 SR = color.R * SA;
             uint8 SG = color.G * SA;
             uint8 SB = color.B * SA;
@@ -1214,6 +1215,7 @@ bitmap create_image_caps(bitmap image) {
         result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
     }
     
+    // Todo: sort by brightness and darkness!!
     int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
         blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - dim / 2, centers[i].y - dim / 2, dim, dim);
@@ -1292,11 +1294,8 @@ bitmap create_image_texture(bitmap image) {
             w = dim * index / Texture_Elements;
             index = Texture_Elements - 1;
         }
-        // } else {
-        //     w = dim * index / Texture_Elements;
-        // }
         
-        blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected);
+        blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected, settings.invert_alpha);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -1403,7 +1402,7 @@ struct Panel {
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
     bool push_header(char *text, Color_Palette palette, int header, int *current_header);
     int  push_selector(char *text, Color_Palette palette);
-    void add_title(char *title, Color c);
+    void add_text(char *title, Color c, int override_font_size = -1);
 };
 
 enum Push_Result {
@@ -1738,7 +1737,7 @@ int main(void) {
         // Settings Panel
         Panel settings_panel = make_panel(settings_left, main_border, 30, settings_width, Small_Font);
         settings_panel.current_row(1, 1.5);
-        settings_panel.add_title("Settings", BLUE);
+        settings_panel.add_text("Settings", BLUE, Medium_Font);
 
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
@@ -1869,11 +1868,10 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
 
-            settings_panel.row();
-            settings_panel.push_toggler("Invert Size", default_palette, &settings.invert_size);
-
-            settings_panel.row();
-            settings_panel.push_toggler("Invert Alpha", default_palette, &settings.invert_alpha);
+            settings_panel.row(3);
+            settings_panel.add_text("Invert:", BLUE);
+            settings_panel.push_toggler("Size", default_palette, &settings.invert_size);
+            settings_panel.push_toggler("Alpha", default_palette, &settings.invert_alpha);
         }
 
         settings_panel.row(1, 0.5);
@@ -2118,10 +2116,11 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
     return 0;
 }
 
-void Panel::add_title(char *title, Color c) {
-    RECT title_rect = get_current_rect();
-    int title_font_size = clamp(font_size + 1, 0, N_SIZES - 1);
-    render_text(title, strlen(title), title_font_size, title_rect, c);
+void Panel::add_text(char *text, Color c, int override_font_size) {
+    int text_font_size = override_font_size != -1 ? override_font_size : font_size;
+    render_text(text, strlen(text), text_font_size, get_current_rect(), c);
+
+    at_x += column_width;
 }
 
 bool Panel::push_header(char *text, Color_Palette palette, int header, int *current_header) {

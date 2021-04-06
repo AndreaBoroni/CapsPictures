@@ -865,7 +865,8 @@ struct General_Settings {
     int range_high = Texture_Elements;
     int range_low  = 0;
 
-    bool inverse_texture = false;
+    bool invert_size  = false;
+    bool invert_alpha = false;
 };
 General_Settings settings;
 
@@ -1282,7 +1283,7 @@ bitmap create_image_texture(bitmap image) {
         
         // lower is less bright
         int index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
-        if (settings.inverse_texture) index = settings.range_high - 1 + settings.range_low - index;
+        if (settings.invert_size) index = settings.range_high - 1 + settings.range_low - index;
         index = clamp(index, settings.range_low, settings.range_high - 1);
 
         int w = dim;
@@ -1395,12 +1396,11 @@ struct Panel {
     void indent(float indent_percentage = 0.1);
     RECT get_current_rect();
 
-    bool push_toggler(char *name, Color_Palette palette, bool *toggled);
+    bool push_toggler(char *name, Color_Palette palette, bool *toggled, Color *override_color = NULL);
     int  push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float = false);
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
     bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order);
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
-    bool push_color_picker(char *text, Color_Palette palette, Color color);
     bool push_header(char *text, Color_Palette palette, int header, int *current_header);
     int  push_selector(char *text, Color_Palette palette);
     void add_title(char *title, Color c);
@@ -1589,7 +1589,7 @@ int main(void) {
         source_panel.current_row(1, display_rows);
 
         RECT s_rect = source_panel.get_current_rect();
-        RECT render_source_rect = {s_rect.left + border, s_rect.top + border, s_rect.right - border, s_rect.bottom - border};
+        RECT render_source_rect = {s_rect.left + border*2, s_rect.top + border*2, s_rect.right - border*2, s_rect.bottom - border*2};
         
         int source_button_result;
         if (image.Memory) {
@@ -1619,7 +1619,7 @@ int main(void) {
         result_panel.current_row(1, display_rows);
 
         RECT p_rect = result_panel.get_current_rect();
-        RECT render_processed_rect = {p_rect.left + border, p_rect.top + border, p_rect.right - border, p_rect.bottom - border};
+        RECT render_processed_rect = {p_rect.left + border*2, p_rect.top + border*2, p_rect.right - border*2, p_rect.bottom - border*2};
 
         int processed_button_result;
         if (result_bitmap.Memory) {
@@ -1765,8 +1765,10 @@ int main(void) {
             settings.y_hex = MAX(1, settings.y_hex + y_hex_press);
             if (y_hex_press != 0) compute_dimensions_from_y_hex(image);
             
-            settings_panel.row();
-            settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
+            if (!settings.allow_oversizing && settings.centers_style == Texture_Style) {
+                settings_panel.row();
+                settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
+            }
 
         } else if (settings.centers_style == Grid && settings.centers_settings_visible) {
             settings_panel.row(1, 0.25);
@@ -1858,11 +1860,7 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &settings.allow_oversizing);
 
-            if (settings.allow_oversizing && settings.centers_style == Grid) {
-                settings_panel.row();
-                settings_panel.indent(0.05);
-                settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
-            }
+            if (settings.allow_oversizing) settings.shuffle_centers = true;
 
             int max_range = settings.allow_oversizing ? Texture_Elements * SQRT_2 + 5 : Texture_Elements;
             settings.range_low  = clamp(settings.range_low,  0, max_range);
@@ -1872,7 +1870,10 @@ int main(void) {
             settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
 
             settings_panel.row();
-            settings_panel.push_toggler("Invert", default_palette, &settings.inverse_texture);
+            settings_panel.push_toggler("Invert Size", default_palette, &settings.invert_size);
+
+            settings_panel.row();
+            settings_panel.push_toggler("Invert Alpha", default_palette, &settings.invert_alpha);
         }
 
         settings_panel.row(1, 0.5);
@@ -1978,7 +1979,7 @@ int main(void) {
         }
 
         settings_panel.row(2);
-        color_picker_active ^= settings_panel.push_color_picker("Background", default_palette, settings.bg_color);
+        settings_panel.push_toggler("Background", default_palette, &color_picker_active, &settings.bg_color);
         settings_panel.push_toggler("Original", default_palette, &settings.use_original_as_background);
 
         if (color_picker_active) {
@@ -2041,7 +2042,7 @@ RECT Panel::get_current_rect() {
     return get_rect(at_x, at_y, column_width, row_height);
 }
 
-bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
+bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled, Color *override_color) {
     int thickness   = 2;
     int rect_side   = row_height - 2 * thickness;
     int inside_side = row_height - 6 * thickness;
@@ -2050,7 +2051,7 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
 
     int name_length = strlen(name);
-    int name_width  = (name_length + 2) * (Font.advance * Font.scale[font_size]);
+    int name_width  = MIN((name_length + 2) * (Font.advance * Font.scale[font_size]), column_width - rect_side);
     RECT name_rect  = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
     bool hovering = v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect);
@@ -2060,7 +2061,8 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled) {
     Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
 
     render_rectangle(button_rect, button_color, thickness);
-    if (*toggled) render_filled_rectangle(inside_rect, button_color);
+    if (override_color) render_filled_rectangle(inside_rect, *override_color);
+    else if (*toggled)  render_filled_rectangle(inside_rect, button_color);
     render_text(name, name_length, font_size, name_rect, text_color);
 
     at_x += column_width;
@@ -2178,6 +2180,11 @@ int Panel::push_button(char *text, Color_Palette palette, int thickness) {
     int text_length  = strlen(text);
 
     RECT button_rect = get_current_rect();
+    button_rect.left   += thickness;
+    button_rect.right  -= thickness;
+    button_rect.top    += thickness;
+    button_rect.bottom -= thickness;
+
     bool highlighted = v2_inside_rect(mouse_position, button_rect) && !sliders.pressing_a_slider;
 
     Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
@@ -2194,36 +2201,6 @@ int Panel::push_button(char *text, Color_Palette palette, int thickness) {
     if (highlighted)                                              return Button_Hovered;
 
     return Button_not_Pressed_nor_Hovered;
-}
-
-bool Panel::push_color_picker(char *name, Color_Palette palette, Color color) {
-    int thickness   = 2;
-    int rect_side   = row_height - 2 * thickness;
-    int inside_side = row_height - 6 * thickness;
-
-    RECT color_rect  = get_rect(at_x + thickness, at_y + thickness, rect_side, rect_side);
-    RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
-
-    int name_length = strlen(name);
-    int name_width  = (name_length + 2) * (Font.advance * Font.scale[font_size]);
-    RECT name_rect  = get_rect(at_x + rect_side, at_y, name_width, row_height);
-
-    bool hovering = v2_inside_rect(mouse_position, color_rect) || v2_inside_rect(mouse_position, name_rect);
-    bool highlighted = hovering && !sliders.pressing_a_slider;
-
-    Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
-    Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
-
-    render_rectangle(color_rect, button_color, thickness);
-    render_filled_rectangle(inside_rect, color);
-    render_text(name, name_length, font_size, name_rect, text_color);
-
-    at_x += column_width;
-
-    if (highlighted && left_button_down && !handled_press_left) {
-        return true;
-    }
-    return false;
 }
 
 bool slider_is_pressed(int index) {

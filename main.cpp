@@ -8,7 +8,6 @@ using namespace std;
     - Optimize
     - Save with the correct number
 UI:
-    - Render circles by brightness
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
 */
@@ -54,6 +53,12 @@ struct bitmap
     BITMAPINFO *Info = NULL;
 };
 
+const int file_name_size = 400;
+struct Texture {
+    bitmap texture = {0};
+    char name[file_name_size] = "";
+};
+
 struct RECT_f {
     float left, top, right, bottom;
 };
@@ -89,18 +94,18 @@ bool changed_size = false;
 
 #define Total_Caps 121
 bitmap caps_data[Total_Caps];
-#define Total_Circles 20
-bitmap circles_data[Total_Circles];
 
-#define Total_Circles_FT 50
-bitmap circle_texture;
+#define Texture_Elements 50
+
+#define MAX_TEXTURES 10
+Texture textures[MAX_TEXTURES];
+int total_textures = 0;
 
 #define FIRST_CHAR_SAVED 32
 #define LAST_CHAR_SAVED  126
 #define CHAR_SAVED_RANGE LAST_CHAR_SAVED - FIRST_CHAR_SAVED + 1
 
 #define N_SIZES 3
-
 struct Font_Data {
     float scale[N_SIZES];
     
@@ -274,22 +279,24 @@ void render_text(char *text, int length, int font_type, RECT dest_rect, Color c 
         int skipped_horizontal_pixels = (xpos + quad.x1 - quad.x0) - max_x;
         for (y = ypos; y < max_y; y++) {
             for (x = xpos; x < max_x; x++) {
-                float SA = *Source / 255.0;
-                uint8 SR = c.R * SA;
-                uint8 SG = c.G * SA;
-                uint8 SB = c.B * SA;
+                if (xpos > 0 && ypos > 0) {
+                    float SA = *Source / 255.0;
+                    uint8 SR = c.R * SA;
+                    uint8 SG = c.G * SA;
+                    uint8 SB = c.B * SA;
 
-                float DA = ((*Dest >> 24) & 0xff) / 255.0;
-                uint8 DR =  (*Dest >> 16) & 0xff;
-                uint8 DG =  (*Dest >>  8) & 0xff;
-                uint8 DB =  (*Dest >>  0) & 0xff;
+                    float DA = ((*Dest >> 24) & 0xff) / 255.0;
+                    uint8 DR =  (*Dest >> 16) & 0xff;
+                    uint8 DG =  (*Dest >>  8) & 0xff;
+                    uint8 DB =  (*Dest >>  0) & 0xff;
 
-                uint8 A = 255 * (SA + DA - SA*DA);
-                uint8 R = DR * (1 - SA) + SR;
-                uint8 G = DG * (1 - SA) + SG;
-                uint8 B = DB * (1 - SA) + SB;
+                    uint8 A = 255 * (SA + DA - SA*DA);
+                    uint8 R = DR * (1 - SA) + SR;
+                    uint8 G = DG * (1 - SA) + SG;
+                    uint8 B = DB * (1 - SA) + SB;
 
-                *Dest = (A << 24) | (R << 16) | (G << 8) | B;
+                    *Dest = (A << 24) | (R << 16) | (G << 8) | B;
+                }
                 Source++;
                 Dest++;
             }
@@ -576,8 +583,8 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 }
 */
 
-int circle_dim = 50;
-void blit_circle_to_bitmap(bitmap *Dest, int circle_index, v2 center, int w, Color color) {
+int texture_dim = 50;
+void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index) {
 
     int x = center.x - w / 2;
     int y = center.y - w / 2;
@@ -596,21 +603,20 @@ void blit_circle_to_bitmap(bitmap *Dest, int circle_index, v2 center, int w, Col
 
     int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
     uint8 *Row     = (uint8 *)  Dest->Memory;
-    uint32 *Texels = (uint32 *) circle_texture.Memory;
+    uint32 *Texels = (uint32 *) textures[texture_index].texture.Memory;
     Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
 
-    float width_scale  = (float) circle_dim / (float) w;
-    float height_scale = (float) circle_dim / (float) w;
+    float width_scale  = (float) texture_dim / (float) w;
+    float height_scale = (float) texture_dim / (float) w;
 
     for (int Y = starting_y; Y < ending_y; Y++) {
         uint32 *Pixel = (uint32 *)Row;
         y_bitmap = (Y - y) * height_scale;
         for (int X = starting_x; X < ending_x; X++) {
             x_bitmap = (X - x) * width_scale;
-            uint32 source_pixel = Texels[x_bitmap + y_bitmap * circle_texture.Width + circle_index * circle_dim];
+            uint32 source_pixel = Texels[x_bitmap + y_bitmap * textures[texture_index].texture.Width + element_index * texture_dim];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
-            // float SA = 1.0;
             uint8 SR = color.R * SA;
             uint8 SG = color.G * SA;
             uint8 SB = color.B * SA;
@@ -790,8 +796,15 @@ enum Centers_Style {
     Random,
 };
 
+enum Render_Centers_By {
+    Randomness,
+    Brightness,
+    Darkness,
+    Render_Centers_By_Count,
+};
+
 #define Caps_Style    0
-#define Circles_Style 1
+#define Texture_Style 1
 
 struct General_Settings {
     int result_brightness = 50;
@@ -808,11 +821,15 @@ struct General_Settings {
 
     bool lock_zoom = true;
 
-    int centers_style = Grid;
-    bool centers_settings_visible = true;
+    int texture_selected = 0;
 
-    int caps_or_circles = Circles_Style;
-    bool style_settings_visible = false;
+    // background
+    Color bg_color = BLACK;
+    bool use_original_as_background = false;
+
+    // Grid
+    int caps_or_texture = Texture_Style;
+    bool style_settings_visible = true;
     
     // centers_hex is selected
     int x_hex  = 10;
@@ -828,27 +845,27 @@ struct General_Settings {
     // centers_random is selected
     int total_centers = 2000;
     int random_radius = 10;
-    bool render_centers_by_brightness = false;
-    bool by_brightness_reverse        = false;
+    int render_centers_by = Randomness;
 
-    // caps style
+    // Style
+    int centers_style = Grid;
+    bool centers_settings_visible = false;
+
+    // caps
     bool inverse_caps = false;
     bool by_color     = false;
     bool hard_max     = false;
 
-    // circles style
+    // texture
     int adjusted_brightness = 50;
     int adjusted_hue        = 0;
 
     bool allow_oversizing = false;
 
-    int range_high = Total_Circles_FT;
+    int range_high = Texture_Elements;
     int range_low  = 0;
 
-    bool inverse_circles = false;
-
-    Color bg_color = BLACK;
-    bool use_original_as_background;
+    bool inverse_texture = false;
 };
 General_Settings settings;
 
@@ -1210,7 +1227,7 @@ bitmap create_image_caps(bitmap image) {
     return result_bitmap;
 }
 
-bitmap create_image_circles(bitmap image) {
+bitmap create_image_texture(bitmap image) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
@@ -1238,8 +1255,8 @@ bitmap create_image_circles(bitmap image) {
         min_brightness = MIN(min_brightness, brightnesses[i]);
     }
 
-    if (settings.render_centers_by_brightness) {
-        sort_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.by_brightness_reverse);
+    if (settings.render_centers_by != Randomness) {
+        sort_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.render_centers_by != Brightness);
     }
     
     bitmap result_bitmap;
@@ -1265,20 +1282,20 @@ bitmap create_image_circles(bitmap image) {
         
         // lower is less bright
         int index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
-        if (settings.inverse_circles) index = settings.range_high - 1 + settings.range_low - index;
+        if (settings.inverse_texture) index = settings.range_high - 1 + settings.range_low - index;
         index = clamp(index, settings.range_low, settings.range_high - 1);
 
         int w = dim;
-        if (index >= Total_Circles_FT) {
+        if (index >= Texture_Elements) {
             assert(settings.allow_oversizing);
-            w = dim * index / Total_Circles_FT;
-            index = Total_Circles_FT - 1;
+            w = dim * index / Texture_Elements;
+            index = Texture_Elements - 1;
         }
         // } else {
-        //     w = dim * index / Total_Circles_FT;
+        //     w = dim * index / Texture_Elements;
         // }
         
-        blit_circle_to_bitmap(&result_bitmap, index, centers[i], w, colors[i]);
+        blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -1385,6 +1402,7 @@ struct Panel {
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
     bool push_color_picker(char *text, Color_Palette palette, Color color);
     bool push_header(char *text, Color_Palette palette, int header, int *current_header);
+    int  push_selector(char *text, Color_Palette palette);
     void add_title(char *title, Color c);
 };
 
@@ -1458,6 +1476,16 @@ int get_CPM() {
     return counter_per_second.QuadPart / 1000;
 }
 
+void load_image(bitmap *buffer, const char *file_name, bool swap_r_and_b = false, bool premultiply_a = false) {
+    int Bpp;
+    buffer->Memory = stbi_load(file_name, &buffer->Width, &buffer->Height, &Bpp, Bytes_Per_Pixel);
+    assert(buffer->Memory);
+    assert(Bpp == Bytes_Per_Pixel);
+
+    if (swap_r_and_b)  swap_red_and_blue_channels(buffer);
+    if (premultiply_a) premultiply_alpha(buffer);
+}
+
 int main(void) {
     initialize_main_buffer();
     start_main_window();
@@ -1473,43 +1501,46 @@ int main(void) {
     init_font(sizes);
 
     for (int i = 0; i < Total_Caps; i++) {
-        int Bpp;
         string filepath = "Caps/Cap " + to_string(i + 1) + ".png";
-        caps_data[i].Memory = stbi_load(filepath.c_str(), &caps_data[i].Width, &caps_data[i].Height, &Bpp, Bytes_Per_Pixel);
-        assert(caps_data[i].Memory);
-        assert(Bpp == Bytes_Per_Pixel);
-
-        swap_red_and_blue_channels(&caps_data[i]);
-        premultiply_alpha(&caps_data[i]);
-    }
-        
-    for (int i = 0; i < Total_Circles; i++) {
-        int Bpp;
-        string filepath = "Circles/circle " + to_string(i + 1) + ".png";
-        int index = Total_Circles - 1 - i;
-        circles_data[index].Memory = stbi_load(filepath.c_str(), &circles_data[index].Width, &circles_data[index].Height, &Bpp, Bytes_Per_Pixel);
-        assert(circles_data[index].Memory);
-        assert(Bpp == Bytes_Per_Pixel);
+        load_image(&caps_data[i], filepath.c_str(), true, true);
     }
     
-    int Bpp;
-    string filepath = "Circles/circles_texture_50.png";
-    // string filepath = "Circles/diamonds.png";
-    // invert_alpha(&circle_texture);
-    circle_texture.Memory = stbi_load(filepath.c_str(), &circle_texture.Width, &circle_texture.Height, &Bpp, Bytes_Per_Pixel);
-    assert(circle_texture.Memory);
-    assert(Bpp == Bytes_Per_Pixel);
-    // for (int i = 0; i < 50; i++) {
-    //     for (int j = 1050; j < 1070; j++) {
-    //         for (int b = 0; b < 4; b++) {
-    //             printf("%d ", circle_texture.Memory[i * circle_texture.Width * 4 + j * 4 + b]);
-    //         }
-    //         printf("/");
-    //     }
-    //     printf("\n");
-    // }
+    char *path = "Textures/*.png";
+    WIN32_FIND_DATA ffd;
+    HANDLE texture_dir = FindFirstFile(path, &ffd);
+    LARGE_INTEGER filesize;
 
-    const int file_name_size = 400;
+    do {
+        if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            filesize.LowPart  = ffd.nFileSizeLow;
+            filesize.HighPart = ffd.nFileSizeHigh;
+            
+            char *file_name = &ffd.cFileName[0];
+
+            char *texture_prefix = "texture_";
+            bool valid_texture_name = true;
+            for (int i = 0; i < strlen(texture_prefix); i++) {
+                if (texture_prefix[i] != file_name[i]) valid_texture_name = false;
+            }
+            if (!valid_texture_name) continue;
+
+            char file_path[file_name_size] = "Textures/";
+            strcat(file_path, file_name);
+
+            load_image(&textures[total_textures].texture, file_path);
+
+            file_name = file_name + strlen(texture_prefix);
+            int dot_index = get_dot_index(file_name, file_name_size);
+            file_name[dot_index] = '\0';
+
+            strncpy(textures[total_textures].name, file_name, strlen(file_name));
+
+            total_textures++;
+        }
+    } while (FindNextFile(texture_dir, &ffd) != 0);
+
+    FindClose(texture_dir);
+
     char file_name[file_name_size] = "";
     int save_counter = 1; // Todo: start counter at the last already saved image +1
     bool saved_changes = true;
@@ -1549,7 +1580,7 @@ int main(void) {
         GetCursorPos(&p);
         mouse_position = screen_to_window_position(p);
 
-        // Render
+        // Reset BAckground
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         
         int border = 5;
@@ -1654,11 +1685,11 @@ int main(void) {
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
-                if (settings.caps_or_circles == Caps_Style) {
+                if (settings.caps_or_texture == Caps_Style) {
                     result_bitmap = create_image_caps(image);
                 } else {
-                    assert(settings.caps_or_circles == Circles_Style);
-                    result_bitmap = create_image_circles(image);
+                    assert(settings.caps_or_texture == Texture_Style);
+                    result_bitmap = create_image_texture(image);
                 }
 
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
@@ -1760,22 +1791,25 @@ int main(void) {
             settings.random_radius = MAX(1, settings.random_radius + random_radius_press);
             
             settings_panel.row();
-            int total_circles_press;
-            if (settings.caps_or_circles == Caps_Style) {
-                total_circles_press = settings_panel.push_updown_counter("Caps", default_palette, UpDown_(settings.total_centers));
+            int total_element_press;
+            if (settings.caps_or_texture == Caps_Style) {
+                total_element_press = settings_panel.push_updown_counter("Caps", default_palette, UpDown_(settings.total_centers));
             } else {
-                total_circles_press = settings_panel.push_updown_counter("Circles", default_palette, UpDown_(settings.total_centers));
+                total_element_press = settings_panel.push_updown_counter("Elements", default_palette, UpDown_(settings.total_centers));
             }
-            settings.total_centers = MAX(1, settings.total_centers + total_circles_press * 10);
+            settings.total_centers = MAX(1, settings.total_centers + total_element_press * 10);
 
             settings_panel.row();
-            settings_panel.push_toggler("By Brightness", default_palette, &settings.render_centers_by_brightness);
-
-            if (settings.render_centers_by_brightness) {
-                settings_panel.row();
-                settings_panel.indent(0.05);
-                settings_panel.push_toggler("Reverse", default_palette, &settings.by_brightness_reverse);
+            int by_press;
+            switch (settings.render_centers_by) {
+                case Randomness: by_press = settings_panel.push_selector("Randomly", default_palette);      break;
+                case Brightness: by_press = settings_panel.push_selector("By Brightness", default_palette); break;
+                case Darkness:   by_press = settings_panel.push_selector("By Darkness", default_palette);   break;
             }
+            settings.render_centers_by += by_press;
+            if (settings.render_centers_by == -1)                      settings.render_centers_by = Render_Centers_By_Count - 1;
+            if (settings.render_centers_by == Render_Centers_By_Count) settings.render_centers_by = 0;
+
         }
 
         if (settings.centers_settings_visible) {
@@ -1789,11 +1823,11 @@ int main(void) {
         settings_panel.row(1, 0.5);
         settings_panel.row(2);
         bool style_header_pushed = false;
-        style_header_pushed |= settings_panel.push_header("Caps", header_palette,    Caps_Style,    &settings.caps_or_circles);
-        style_header_pushed |= settings_panel.push_header("Circles", header_palette, Circles_Style, &settings.caps_or_circles);
+        style_header_pushed |= settings_panel.push_header("Caps",    header_palette,    Caps_Style, &settings.caps_or_texture);
+        style_header_pushed |= settings_panel.push_header("Texture", header_palette, Texture_Style, &settings.caps_or_texture);
         if (style_header_pushed) settings.style_settings_visible = !settings.style_settings_visible;
 
-        if (settings.caps_or_circles == Caps_Style && settings.style_settings_visible) {
+        if (settings.caps_or_texture == Caps_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &settings.inverse_caps);
@@ -1806,8 +1840,15 @@ int main(void) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
-        } else if (settings.caps_or_circles == Circles_Style && settings.style_settings_visible) {
+        } else if (settings.caps_or_texture == Texture_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);
+            
+            settings_panel.row();
+            int texture_press = settings_panel.push_selector(textures[settings.texture_selected].name, default_palette);
+            settings.texture_selected += texture_press;
+            if (settings.texture_selected == -1)             settings.texture_selected = total_textures - 1;
+            if (settings.texture_selected == total_textures) settings.texture_selected = 0;
+
             settings_panel.row();
             settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
 
@@ -1823,7 +1864,7 @@ int main(void) {
                 settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
             }
 
-            int max_range = settings.allow_oversizing ? Total_Circles_FT * SQRT_2 + 5 : Total_Circles_FT;
+            int max_range = settings.allow_oversizing ? Texture_Elements * SQRT_2 + 5 : Texture_Elements;
             settings.range_low  = clamp(settings.range_low,  0, max_range);
             settings.range_high = clamp(settings.range_high, 0, max_range);
 
@@ -1831,7 +1872,7 @@ int main(void) {
             settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
 
             settings_panel.row();
-            settings_panel.push_toggler("Invert", default_palette, &settings.inverse_circles);
+            settings_panel.push_toggler("Invert", default_palette, &settings.inverse_texture);
         }
 
         settings_panel.row(1, 0.5);
@@ -1852,11 +1893,11 @@ int main(void) {
             free(result_bitmap.Memory);
             free(result_bitmap.Original);
 
-            if (settings.caps_or_circles == Caps_Style) {
+            if (settings.caps_or_texture == Caps_Style) {
                 result_bitmap = create_image_caps(image);
             } else {
-                assert(settings.caps_or_circles == Circles_Style);
-                result_bitmap = create_image_circles(image);
+                assert(settings.caps_or_texture == Texture_Style);
+                result_bitmap = create_image_texture(image);
             }
 
             GifWriter writer = {};
@@ -1866,11 +1907,11 @@ int main(void) {
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
-                if (settings.caps_or_circles == Caps_Style) {
+                if (settings.caps_or_texture == Caps_Style) {
                     result_bitmap = create_image_caps(image);
                 } else {
-                    assert(settings.caps_or_circles == Circles_Style);
-                    result_bitmap = create_image_circles(image);
+                    assert(settings.caps_or_texture == Texture_Style);
+                    result_bitmap = create_image_texture(image);
                 }
                 swap_red_and_blue_channels(&result_bitmap);
                 GifWriteFrame(&writer, result_bitmap.Memory, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
@@ -2100,6 +2141,37 @@ bool Panel::push_header(char *text, Color_Palette palette, int header, int *curr
        *current_header = header;
     }
     return false;
+}
+
+int Panel::push_selector(char *text, Color_Palette palette) {
+    int thickness = 2;
+    int rect_side = row_height - 2 * thickness;
+
+    RECT at = get_current_rect();
+    RECT minus_rect = get_rect(at_x + thickness, at_y + thickness, rect_side, rect_side);
+    RECT plus_rect  = get_rect(at.right - rect_side - thickness, at_y + thickness, rect_side, rect_side);
+    RECT text_rect  = get_rect(minus_rect.right, at_y, plus_rect.left - minus_rect.right, row_height);
+
+    bool highlighted = v2_inside_rect(mouse_position, at) && !sliders.pressing_a_slider;
+
+    Color button_color = highlighted ? palette.highlight_button_color : palette.button_color;
+    Color text_color   = highlighted ? palette.highlight_text_color   : palette.text_color;
+
+    char sign[2] = "<";
+    render_text(sign, 1, font_size, minus_rect, button_color);
+    sign[0] = '>';
+    render_text(sign, 1, font_size, plus_rect,  button_color);
+
+    render_rectangle(minus_rect, button_color, thickness);
+    render_rectangle(plus_rect,  button_color, thickness);
+    render_text(text, strlen(text), font_size, text_rect, text_color);
+
+    if (left_button_down && !handled_press_left) {
+        if (v2_inside_rect(mouse_position, minus_rect)) return -1;
+        if (v2_inside_rect(mouse_position, plus_rect))  return +1;
+    }
+
+    return 0;
 }
 
 int Panel::push_button(char *text, Color_Palette palette, int thickness) {

@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <string>
 #include <stdlib.h>
+#include <xmmintrin.h>
 
 using namespace std;
 
@@ -1118,7 +1119,40 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
     uint32 *source = (uint32 *) image.Memory;
     if (use_original_as_source) source = (uint32 *) image.Original;
 
-    for (int p = 0; p < image.Width * image.Height; p++) {
+    uint32 n_pixels = image.Width * image.Height;
+    uint32 n_pixels_fast = n_pixels - (n_pixels % 4);
+
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+
+    __m128i brightness_4x = _mm_set1_epi32(b);
+    __m128i mask_FF = _mm_set1_epi32(0xFF);
+    for (int p = 0; p < n_pixels_fast; p += 4) {
+
+        __m128i pixel = _mm_set_epi32(source[p], source[p + 1], source[p + 2], source[p + 3]);
+
+        __m128i A = _mm_and_si128(_mm_srai_epi32(pixel, 24), mask_FF);
+        __m128i R = _mm_and_si128(_mm_srai_epi32(pixel, 16), mask_FF);
+        __m128i G = _mm_and_si128(_mm_srai_epi32(pixel,  8), mask_FF);
+        __m128i B = _mm_and_si128(               pixel,      mask_FF);
+
+        R = _mm_add_epi32(R, brightness_4x);
+        G = _mm_add_epi32(G, brightness_4x);
+        B = _mm_add_epi32(B, brightness_4x);
+
+        R = _mm_max_epi16(_mm_min_epi16(R, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+        G = _mm_max_epi16(_mm_min_epi16(G, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+        B = _mm_max_epi16(_mm_min_epi16(B, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+
+        __m128i shift_A = _mm_slli_epi32(A, 24);
+        __m128i shift_R = _mm_slli_epi32(R, 16);
+        __m128i shift_G = _mm_slli_epi32(G, 8);
+
+        __m128i pixels = _mm_or_si128(_mm_or_si128(_mm_or_si128(shift_A, shift_R), shift_G), B);
+        *((__m128i *) (dest + p)) = pixels;
+    }
+
+    for (int p = n_pixels_fast; p < n_pixels; p++) {
         uint8 A = (source[p] >> 24);
         uint8 R = (source[p] >> 16) & 0xff;
         uint8 G = (source[p] >>  8) & 0xff;
@@ -1130,6 +1164,11 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
         
         dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
+
+    QueryPerformanceCounter(&t1);
+    float cycles           = (float) (t1.QuadPart - t0.QuadPart);
+    float cycles_per_pixel = cycles / (float) n_pixels;
+    printf("Brightness: Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 }
 
 void apply_contrast(bitmap image, int contrast, bool use_original_as_source = false) {
@@ -1143,7 +1182,45 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
     uint32 *source = (uint32 *) image.Memory;
     if (use_original_as_source) source = (uint32 *) image.Original;
 
-    for (int p = 0; p < image.Width * image.Height; p++) {
+    uint32 n_pixels = image.Width * image.Height;
+    uint32 n_pixels_fast = n_pixels - (n_pixels % 4);
+
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+
+    __m128i mask_FF  = _mm_set1_epi32(0xFF);
+    __m128i wide_128 = _mm_set1_epi32(128);
+    __m128  wide_f   = _mm_set_ps1(f);
+    for (int p = 0; p < n_pixels_fast; p += 4) {
+
+        __m128i pixel = _mm_set_epi32(source[p], source[p + 1], source[p + 2], source[p + 3]);
+
+        __m128i A = _mm_and_si128(_mm_srai_epi32(pixel, 24), mask_FF);
+        __m128i R = _mm_and_si128(_mm_srai_epi32(pixel, 16), mask_FF);
+        __m128i G = _mm_and_si128(_mm_srai_epi32(pixel,  8), mask_FF);
+        __m128i B = _mm_and_si128(               pixel,      mask_FF);
+
+        __m128 Rf = _mm_mul_ps(_mm_cvtepi32_ps(_mm_sub_epi32(R, wide_128)), wide_f);
+        __m128 Gf = _mm_mul_ps(_mm_cvtepi32_ps(_mm_sub_epi32(G, wide_128)), wide_f);
+        __m128 Bf = _mm_mul_ps(_mm_cvtepi32_ps(_mm_sub_epi32(B, wide_128)), wide_f);
+
+        R = _mm_add_epi32(_mm_cvtps_epi32(Rf), wide_128);
+        G = _mm_add_epi32(_mm_cvtps_epi32(Gf), wide_128);
+        B = _mm_add_epi32(_mm_cvtps_epi32(Bf), wide_128);
+
+        R = _mm_max_epi16(_mm_min_epi16(R, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+        G = _mm_max_epi16(_mm_min_epi16(G, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+        B = _mm_max_epi16(_mm_min_epi16(B, _mm_set1_epi32(255)), _mm_set1_epi32(0));
+
+        __m128i shift_A = _mm_slli_epi32(A, 24);
+        __m128i shift_R = _mm_slli_epi32(R, 16);
+        __m128i shift_G = _mm_slli_epi32(G, 8);
+
+        __m128i pixels = _mm_or_si128(_mm_or_si128(_mm_or_si128(shift_A, shift_R), shift_G), B);
+        *((__m128i *) (dest + p)) = pixels;
+    }
+
+    for (int p = n_pixels_fast; p < n_pixels; p++) {
         int R_pre = (source[p] >> 16) & 0xff;
         int G_pre = (source[p] >>  8) & 0xff;
         int B_pre = (source[p] >>  0) & 0xff;
@@ -1155,6 +1232,11 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
         
         dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
+
+    QueryPerformanceCounter(&t1);
+    float cycles           = (float) (t1.QuadPart - t0.QuadPart);
+    float cycles_per_pixel = cycles / (float) n_pixels;
+    printf("Contrast:   Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 
 }
 

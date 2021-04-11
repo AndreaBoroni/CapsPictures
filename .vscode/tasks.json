@@ -17,6 +17,7 @@
                 "-lgdi32",
                 "-lComdlg32",
                 "-w",
+                "-march=native",
             ],
             "problemMatcher": [ "$gcc" ],
             "group": { 
@@ -40,11 +41,28 @@
                 "-lgdi32",
                 "-lComdlg32",
                 "-w",
+                "-march=native",
             ],
             "problemMatcher": [ "$gcc" ],
-            "group": { 
-                "kind": "build",
-            }
-        }
+        },
+        {
+            "type": "shell",
+            "label": "g++.exe build disassembly",
+            "command": "g++.exe",
+            "args": [
+                "-g",
+                "-o",
+                "main.S",
+                "-S",
+                "main.cpp",
+                "-static-libgcc",
+                "-static-libstdc++",
+                "-static",
+                "-lgdi32",
+                "-lComdlg32",
+                "-w",
+            ],
+            "problemMatcher": [ "$gcc" ],
+        },
     ]
 }

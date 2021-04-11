@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <intrin.h>
 #include <string>
 #include <stdlib.h>
 #include <xmmintrin.h>
@@ -1122,14 +1123,13 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
     uint32 n_pixels = image.Width * image.Height;
     uint32 n_pixels_fast = n_pixels - (n_pixels % 4);
 
-    LARGE_INTEGER t0, t1;
-    QueryPerformanceCounter(&t0);
+    uint64 t0 = __rdtsc();
 
     __m128i brightness_4x = _mm_set1_epi32(b);
     __m128i mask_FF = _mm_set1_epi32(0xFF);
     for (int p = 0; p < n_pixels_fast; p += 4) {
 
-        __m128i pixel = _mm_set_epi32(source[p], source[p + 1], source[p + 2], source[p + 3]);
+        __m128i pixel = _mm_loadu_si128((__m128i *) (source + p));
 
         __m128i A = _mm_and_si128(_mm_srai_epi32(pixel, 24), mask_FF);
         __m128i R = _mm_and_si128(_mm_srai_epi32(pixel, 16), mask_FF);
@@ -1165,8 +1165,8 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
         dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
 
-    QueryPerformanceCounter(&t1);
-    float cycles           = (float) (t1.QuadPart - t0.QuadPart);
+    uint64 t1 = __rdtsc();
+    float cycles           = (float) (t1 - t0);
     float cycles_per_pixel = cycles / (float) n_pixels;
     printf("Brightness: Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 }
@@ -1185,15 +1185,14 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
     uint32 n_pixels = image.Width * image.Height;
     uint32 n_pixels_fast = n_pixels - (n_pixels % 4);
 
-    LARGE_INTEGER t0, t1;
-    QueryPerformanceCounter(&t0);
+    uint64 t0 = __rdtsc();
 
     __m128i mask_FF  = _mm_set1_epi32(0xFF);
     __m128i wide_128 = _mm_set1_epi32(128);
     __m128  wide_f   = _mm_set_ps1(f);
     for (int p = 0; p < n_pixels_fast; p += 4) {
 
-        __m128i pixel = _mm_set_epi32(source[p], source[p + 1], source[p + 2], source[p + 3]);
+        __m128i pixel = _mm_loadu_si128((__m128i *) (source + p));
 
         __m128i A = _mm_and_si128(_mm_srai_epi32(pixel, 24), mask_FF);
         __m128i R = _mm_and_si128(_mm_srai_epi32(pixel, 16), mask_FF);
@@ -1233,8 +1232,8 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
         dest[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
 
-    QueryPerformanceCounter(&t1);
-    float cycles           = (float) (t1.QuadPart - t0.QuadPart);
+    uint64 t1 = __rdtsc();
+    float cycles           = (float) (t1 - t0);
     float cycles_per_pixel = cycles / (float) n_pixels;
     printf("Contrast:   Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 

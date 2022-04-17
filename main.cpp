@@ -58,6 +58,10 @@ struct bitmap
 const int file_name_size = 400;
 struct Texture {
     bitmap texture = {0};
+    
+    int elements;
+    int element_side;
+
     char name[file_name_size] = "";
 };
 
@@ -97,9 +101,7 @@ bool changed_size = false;
 #define Total_Caps 121
 bitmap caps_data[Total_Caps];
 
-#define Texture_Elements 50
-
-#define MAX_TEXTURES 10
+#define MAX_TEXTURES 20
 Texture textures[MAX_TEXTURES];
 int total_textures = 0;
 
@@ -585,7 +587,6 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 }
 */
 
-int texture_dim = 50;
 void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index, bool invert_alpha) {
 
     int x = center.x - w / 2;
@@ -601,22 +602,24 @@ void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, C
     if (ending_x < 0) return;
     if (ending_y < 0) return;
 
+    Texture t = textures[texture_index];
+
     int x_bitmap, y_bitmap;
 
     int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
     uint8 *Row     = (uint8 *)  Dest->Memory;
-    uint32 *Texels = (uint32 *) textures[texture_index].texture.Memory;
+    uint32 *Texels = (uint32 *) t.texture.Memory;
     Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
 
-    float width_scale  = (float) texture_dim / (float) w;
-    float height_scale = (float) texture_dim / (float) w;
+    float width_scale  = (float) t.element_side / (float) w;
+    float height_scale = (float) t.element_side / (float) w;
 
     for (int Y = starting_y; Y < ending_y; Y++) {
         uint32 *Pixel = (uint32 *)Row;
         y_bitmap = (Y - y) * height_scale;
         for (int X = starting_x; X < ending_x; X++) {
             x_bitmap = (X - x) * width_scale;
-            uint32 source_pixel = Texels[x_bitmap + y_bitmap * textures[texture_index].texture.Width + element_index * texture_dim];
+            uint32 source_pixel = Texels[x_bitmap + y_bitmap * t.texture.Width + element_index * t.element_side];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
             if (invert_alpha) SA = 1 - SA;
@@ -865,9 +868,10 @@ struct General_Settings {
 
     bool allow_oversizing = false;
 
-    int range_high = Texture_Elements;
+    int range_high = 1000;
     int range_low  = 0;
 
+    bool random_size  = false;
     bool invert_size  = false;
     bool invert_alpha = false;
 };
@@ -1035,27 +1039,54 @@ void compute_dimensions_from_y_grid(bitmap image) {
     settings.x_grid = (float) image.Height / (float) settings.width + 1;
 }
 
+void crop_image(bitmap *image, RECT_f displayed_crop_rectangle) {
+
+    RECT crop_rectangle;
+    crop_rectangle.left = max((int) displayed_crop_rectangle.left, 0);
+    crop_rectangle.top  = max((int) displayed_crop_rectangle.top, 0);
+    crop_rectangle.right  = min((int) displayed_crop_rectangle.right, image->Width);
+    crop_rectangle.bottom = min((int) displayed_crop_rectangle.bottom, image->Height);
+
+    int new_width  = crop_rectangle.right - crop_rectangle.left;
+    int new_height = crop_rectangle.bottom - crop_rectangle.top;
+
+    // printf("%d %d", new_width, new_height);
+    uint32 *new_memory = (uint32 *) malloc(new_width * new_height * Bytes_Per_Pixel);
+    uint32 *old_memory = (uint32 *) image->Memory;
+    for (int i = 0; i < new_width; i++) {
+        for (int j = 0; j < new_height; j++) {
+            new_memory[i + j * new_width] = old_memory[(i + crop_rectangle.left) + (j + crop_rectangle.top) * image->Width];
+        }
+    }
+
+    free(image->Memory);
+
+    image->Memory = (uint8 *) new_memory;
+    image->Width  = new_width;
+    image->Height = new_height;
+}
+
 void adjust_bpp(bitmap *image, int Bpp) {
     if (Bpp == 4) return;
     
     if (Bpp == 3) {
-        uint32 *new_Memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
+        uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Bytes      = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
-            new_Memory[p] = (255 << 24) | (Bytes[p*3] << 16) | (Bytes[p*3 + 1] << 8) | (Bytes[p*3 + 2] << 0);
+            new_memory[p] = (255 << 24) | (Bytes[p*3] << 16) | (Bytes[p*3 + 1] << 8) | (Bytes[p*3 + 2] << 0);
         }
         free(image->Memory);
-        image->Memory = (uint8 *) new_Memory;
+        image->Memory = (uint8 *) new_memory;
         return;
     }
     if (Bpp == 1) {
-        uint32 *new_Memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
+        uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Pixels     = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
-            new_Memory[p] = (255 << 24) | (Pixels[p] << 16) | (Pixels[p] << 8) | (Pixels[p] << 0);
+            new_memory[p] = (255 << 24) | (Pixels[p] << 16) | (Pixels[p] << 8) | (Pixels[p] << 0);
         }
         free(image->Memory);
-        image->Memory = (uint8 *) new_Memory;
+        image->Memory = (uint8 *) new_memory;
         return;
     }
     assert(false);
@@ -1168,7 +1199,7 @@ void apply_brightness(bitmap image, int brightness, bool use_original_as_source 
     uint64 t1 = __rdtsc();
     float cycles           = (float) (t1 - t0);
     float cycles_per_pixel = cycles / (float) n_pixels;
-    printf("Brightness: Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
+    // printf("Brightness: Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 }
 
 void apply_contrast(bitmap image, int contrast, bool use_original_as_source = false) {
@@ -1235,7 +1266,7 @@ void apply_contrast(bitmap image, int contrast, bool use_original_as_source = fa
     uint64 t1 = __rdtsc();
     float cycles           = (float) (t1 - t0);
     float cycles_per_pixel = cycles / (float) n_pixels;
-    printf("Contrast:   Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
+    // printf("Contrast:   Total cycles: %.0f, cycles per pixel %f\n", cycles, cycles_per_pixel);
 
 }
 
@@ -1289,11 +1320,15 @@ bitmap create_image_caps(bitmap image) {
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    for (int i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
-        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
-        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
-        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+    if (!settings.use_original_as_background) {
+        for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+            result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+            result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+            result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+            result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+        }
+    } else {
+        blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
     
     // Todo: sort by brightness and darkness!!
@@ -1328,10 +1363,17 @@ bitmap create_image_texture(bitmap image) {
 
         brightnesses[i] = (colors[i].R + colors[i].G + colors[i].B) / 3.0;
 
-        int b = (settings.adjusted_brightness - 50) * 255.0 / 49.0;
-        colors[i].R = clamp((int) (colors[i].R + b), 0, 255);
-        colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
-        colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
+        if (false) {
+            int b = (settings.adjusted_brightness - 50) * 255.0 / 49.0;
+            colors[i].R = clamp((int) (colors[i].R + b), 0, 255);
+            colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
+            colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
+        } else {
+            float b = (float) settings.adjusted_brightness / 50.0;
+            colors[i].R = clamp((int) (colors[i].R * b), 0, 255);
+            colors[i].G = clamp((int) (colors[i].G * b), 0, 255);
+            colors[i].B = clamp((int) (colors[i].B * b), 0, 255);
+        }
 
         if (settings.adjusted_hue) colors[i] = shift_hue(colors[i], settings.adjusted_hue);
 
@@ -1360,20 +1402,26 @@ bitmap create_image_texture(bitmap image) {
         blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
     
+    Texture *t = &textures[settings.texture_selected];
     int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
-        float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
-        
         // lower is less bright
-        int index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
-        if (settings.invert_size) index = settings.range_high - 1 + settings.range_low - index;
-        index = clamp(index, settings.range_low, settings.range_high - 1);
+        int index = 0;
+        if (!settings.random_size){
+            float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
+            index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
+            if (settings.invert_size) index = settings.range_high - 1 + settings.range_low - index;
+            index = clamp(index, settings.range_low, settings.range_high - 1);
+        } else if (settings.random_size) {
+            index = rand() % (settings.range_high - 1 - settings.range_low) + settings.range_low;
+            index = clamp(index, settings.range_low, settings.range_high - 1);
+        }
 
         int w = dim;
-        if (index >= Texture_Elements) {
+        if (index >= t->elements) {
             assert(settings.allow_oversizing);
-            w = dim * index / Texture_Elements;
-            index = Texture_Elements - 1;
+            w = dim * index / (t->elements - 1);
+            index = t->elements - 1;
         }
         
         blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected, settings.invert_alpha);
@@ -1439,11 +1487,11 @@ bool open_file_externally(char *file_name, int size_file_name) {
 
 int get_dot_index(char *file_name, int file_name_size) {
     for (int i = 0; i < file_name_size; i++) {
-        if (file_name[i] == '\0') {
-            while (i >= 0) {
-                if (file_name[i] == '.') return i;
-                i--;
-            }
+        if (file_name[i] != '\0') continue;
+
+        while (i >= 0) {
+            if (file_name[i] == '.') return i;
+            i--;
         }
     }
     return -1;
@@ -1533,21 +1581,19 @@ void update_zoom(RECT_f *zoom_rect, RECT render_rect, float delta, v2 zoom_cente
     float click_x = zoom_center.x - render_rect.left;
     float click_y = zoom_center.y - render_rect.top;
 
-    {
-        float percentage_x = click_x / (float) get_w(render_rect);
-        float percentage_y = click_y / (float) get_h(render_rect);
+    float percentage_x = click_x / (float) get_w(render_rect);
+    float percentage_y = click_y / (float) get_h(render_rect);
 
-        float hover_image_x = percentage_x * w + zoom_rect->left;
-        float hover_image_y = percentage_y * h + zoom_rect->top;
+    float hover_image_x = percentage_x * w + zoom_rect->left;
+    float hover_image_y = percentage_y * h + zoom_rect->top;
 
-        w *= (1 + delta);
-        h = w * (float) get_h(render_rect) / (float) get_w(render_rect);
+    w *= (1 + delta);
+    h = w * (float) get_h(render_rect) / (float) get_w(render_rect);
 
-        zoom_rect->left   = hover_image_x - w * percentage_x;
-        zoom_rect->right  = zoom_rect->left + w;
-        zoom_rect->top    = hover_image_y - h * percentage_y;
-        zoom_rect->bottom = zoom_rect->top + h;
-    }
+    zoom_rect->left   = hover_image_x - w * percentage_x;
+    zoom_rect->right  = zoom_rect->left + w;
+    zoom_rect->top    = hover_image_y - h * percentage_y;
+    zoom_rect->bottom = zoom_rect->top + h;
 }
 
 int get_CPM() {
@@ -1564,6 +1610,43 @@ void load_image(bitmap *buffer, const char *file_name, bool swap_r_and_b = false
 
     if (swap_r_and_b)  swap_red_and_blue_channels(buffer);
     if (premultiply_a) premultiply_alpha(buffer);
+}
+
+bool load_texture(int texture_index, char *file_name) {
+
+    if (texture_index >= MAX_TEXTURES) return false;
+    Texture *t = &textures[texture_index];
+
+    char *texture_prefix = "texture_";
+    for (int i = 0; i < strlen(texture_prefix); i++) {
+        if (texture_prefix[i] != file_name[i]) return false;
+    }
+
+    char file_path[file_name_size] = "Textures/";
+    strcat(file_path, file_name);
+
+    load_image(&t->texture, file_path);
+    if (t->texture.Memory == NULL) return false;
+
+    t->element_side = t->texture.Height;
+    t->elements     = t->texture.Width / t->element_side;
+
+    if (t->elements == 0) {
+        free(t->texture.Memory);
+        return false;
+    }
+
+    file_name = file_name + strlen(texture_prefix);
+    int dot_index = get_dot_index(file_name, file_name_size);
+    file_name[dot_index] = '\0';
+
+    strncpy(textures[total_textures].name, file_name, strlen(file_name));
+
+    if (t->element_side * t->elements != t->texture.Width) {
+        printf("Texture %s might be the wrong size\n", textures[total_textures].name);
+    }
+
+    return true;
 }
 
 int main(void) {
@@ -1592,30 +1675,16 @@ int main(void) {
 
     do {
         if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            filesize.LowPart  = ffd.nFileSizeLow;
-            filesize.HighPart = ffd.nFileSizeHigh;
-            
             char *file_name = &ffd.cFileName[0];
 
-            char *texture_prefix = "texture_";
-            bool valid_texture_name = true;
-            for (int i = 0; i < strlen(texture_prefix); i++) {
-                if (texture_prefix[i] != file_name[i]) valid_texture_name = false;
-            }
-            if (!valid_texture_name) continue;
-
-            char file_path[file_name_size] = "Textures/";
-            strcat(file_path, file_name);
-
-            load_image(&textures[total_textures].texture, file_path);
-
-            file_name = file_name + strlen(texture_prefix);
-            int dot_index = get_dot_index(file_name, file_name_size);
-            file_name[dot_index] = '\0';
-
-            strncpy(textures[total_textures].name, file_name, strlen(file_name));
+            bool success = load_texture(total_textures, file_name);
+            if (!success) continue;
 
             total_textures++;
+            if (total_textures == MAX_TEXTURES) {
+                printf("You have too many textures!");
+                break;
+            }
         }
     } while (FindNextFile(texture_dir, &ffd) != 0);
 
@@ -1692,6 +1761,13 @@ int main(void) {
         source_panel.row(2);
         if (source_panel.push_button("Swap R & B", default_palette, 2) == Button_Left_Clicked) {
             if (image.Memory) swap_red_and_blue_channels(&image);
+        }
+
+        if (source_panel.push_button("Crop", default_palette, 2) == Button_Left_Clicked) {
+            if (image.Memory) {
+                crop_image(&image, source_zoom_rectangle);
+                source_zoom_rectangle = reset_zoom_rectangle(image, render_source_rect);
+            }
         }
 
         // Processed Image Panel
@@ -1845,7 +1921,7 @@ int main(void) {
             settings.y_hex = MAX(1, settings.y_hex + y_hex_press);
             if (y_hex_press != 0) compute_dimensions_from_y_hex(image);
             
-            if (!settings.allow_oversizing && settings.centers_style == Texture_Style) {
+            if (settings.allow_oversizing && settings.centers_style == Texture_Style) {
                 settings_panel.row();
                 settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
             }
@@ -1927,9 +2003,12 @@ int main(void) {
             
             settings_panel.row();
             int texture_press = settings_panel.push_selector(textures[settings.texture_selected].name, default_palette);
-            settings.texture_selected += texture_press;
-            if (settings.texture_selected == -1)             settings.texture_selected = total_textures - 1;
-            if (settings.texture_selected == total_textures) settings.texture_selected = 0;
+            
+            if (texture_press != 0) {
+                settings.texture_selected += texture_press;
+                if (settings.texture_selected == -1)             settings.texture_selected = total_textures - 1;
+                if (settings.texture_selected == total_textures) settings.texture_selected = 0;
+            }
 
             settings_panel.row();
             settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
@@ -1939,13 +2018,13 @@ int main(void) {
 
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &settings.allow_oversizing);
+            if (!settings.allow_oversizing) settings.shuffle_centers = false;
 
-            if (settings.allow_oversizing) settings.shuffle_centers = true;
-
-            int max_range = settings.allow_oversizing ? Texture_Elements * SQRT_2 + 5 : Texture_Elements;
+            int elements = textures[settings.texture_selected].elements;
+            int max_range = (settings.allow_oversizing ? elements * SQRT_2 + 5 : elements) - 1;
             settings.range_low  = clamp(settings.range_low,  0, max_range);
             settings.range_high = clamp(settings.range_high, 0, max_range);
-
+            
             settings_panel.row();
             settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
 
@@ -1953,6 +2032,10 @@ int main(void) {
             settings_panel.add_text("Invert:", BLUE);
             settings_panel.push_toggler("Size", default_palette, &settings.invert_size);
             settings_panel.push_toggler("Alpha", default_palette, &settings.invert_alpha);
+
+            settings_panel.row(1, 0.25);
+            settings_panel.row(1);
+            settings_panel.push_toggler("Random size", default_palette, &settings.random_size);
         }
 
         settings_panel.row(1, 0.5);

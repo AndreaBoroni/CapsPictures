@@ -623,6 +623,10 @@ void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, C
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * t.texture.Width + element_index * t.element_side];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
+            // uint8 TR =  (source_pixel >> 16) & 0xff;
+            // uint8 TG =  (source_pixel >>  8) & 0xff;
+            // uint8 TB =  (source_pixel >>  0) & 0xff;
+            // if (TR == 255 && TG == 255 && TB == 255) SA = 0;
             if (invert_alpha) SA = 1 - SA;
             uint8 SR = color.R * SA;
             uint8 SG = color.G * SA;
@@ -1074,17 +1078,18 @@ void adjust_bpp(bitmap *image, int Bpp) {
         uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Bytes      = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
-            new_memory[p] = (255 << 24) | (Bytes[p*3] << 16) | (Bytes[p*3 + 1] << 8) | (Bytes[p*3 + 2] << 0);
+            new_memory[p] = (255 << 24) | (Bytes[p*4] << 16) | (Bytes[p*4 + 1] << 8) | (Bytes[p*4 + 2] << 0);
         }
         free(image->Memory);
         image->Memory = (uint8 *) new_memory;
         return;
     }
+    
     if (Bpp == 1) {
         uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Pixels     = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
-            new_memory[p] = (255 << 24) | (Pixels[p] << 16) | (Pixels[p] << 8) | (Pixels[p] << 0);
+            new_memory[p] = (255 << 24) | (Pixels[p*4 + 1] << 16) | (Pixels[p*4 + 1] << 8) | (Pixels[p*4 + 1] << 0);
         }
         free(image->Memory);
         image->Memory = (uint8 *) new_memory;
@@ -1626,7 +1631,8 @@ bool load_texture(int texture_index, char *file_name) {
     char file_path[file_name_size] = "Textures/";
     strcat(file_path, file_name);
 
-    load_image(&t->texture, file_path);
+    int Bpp;
+    t->texture.Memory = stbi_load(file_path, &t->texture.Width, &t->texture.Height, &Bpp, Bytes_Per_Pixel);
     if (t->texture.Memory == NULL) return false;
 
     t->element_side = t->texture.Height;
@@ -1637,13 +1643,22 @@ bool load_texture(int texture_index, char *file_name) {
         return false;
     }
 
+    adjust_bpp(&t->texture, Bpp);
     uint32 *Pixels = (uint32 *) t->texture.Memory;
     for (int p = 0; p < t->texture.Width * t->texture.Height; p++) {
         uint8 B = (Pixels[p] >> 16) & 0xff;
         uint8 G = (Pixels[p] >>  8) & 0xff;
         uint8 R = (Pixels[p] >>  0) & 0xff;
 
-        if (B == 255 && G == 255 && R == 255) Pixels[p] = (0 << 24) | (B << 16) | (G << 8) | (R << 0);
+        uint8 A = ((Pixels[p] >> 24) & 0xff);
+        if (B == 255 && G == 255 && R == 255) A = 0;
+        float A_scaled = (float) A / 255.0;
+
+        B = B * A_scaled;
+        G = G * A_scaled;
+        R = R * A_scaled;
+
+        Pixels[p] = (A << 24) | (B << 16) | (G << 8) | (R << 0);
     }
 
     file_name = file_name + strlen(texture_prefix);
@@ -1819,7 +1834,7 @@ int main(void) {
             int Bpp;
             if (success) {
                 if (image.Memory) free(image.Memory);
-                image.Memory = stbi_load(temp_file_name, &image.Width, &image.Height, &Bpp, 0);
+                image.Memory = stbi_load(temp_file_name, &image.Width, &image.Height, &Bpp, 4);
             }
 
             if (image.Memory && success) {

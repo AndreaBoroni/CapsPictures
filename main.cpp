@@ -1515,13 +1515,10 @@ bool open_file_externally(char *file_name, int size_file_name) {
 }
 
 int get_dot_index(char *file_name, int file_name_size) {
+    int result = -1;
     for (int i = 0; i < file_name_size; i++) {
-        if (file_name[i] != '\0') continue;
-
-        while (i >= 0) {
-            if (file_name[i] == '.') return i;
-            i--;
-        }
+        if (file_name[i] == '\0') return result;
+        if (file_name[i] == '.')  result = i;
     }
     return -1;
 }
@@ -1631,20 +1628,22 @@ int get_CPM() {
     return counter_per_second.QuadPart / 1000;
 }
 
-void load_image(bitmap *buffer, const char *file_name, bool swap_r_and_b = false, bool premultiply_a = false) {
+// Todo: if this fails we now quit, but we could keep going and just use the textures
+void load_cap_image(bitmap *buffer, const char *file_name) {
     int Bpp;
     buffer->Memory = stbi_load(file_name, &buffer->Width, &buffer->Height, &Bpp, Bytes_Per_Pixel);
     assert(buffer->Memory);
     assert(Bpp == Bytes_Per_Pixel);
 
-    if (swap_r_and_b)  swap_red_and_blue_channels(buffer);
-    if (premultiply_a) premultiply_alpha(buffer);
+    swap_red_and_blue_channels(buffer);
+    premultiply_alpha(buffer);
 }
 
 bool load_texture(int texture_index, char *file_name) {
 
     if (texture_index >= MAX_TEXTURES) return false;
     Texture *t = &textures[texture_index];
+    if (t->texture.Memory) free(t->texture.Memory); // If the previous load failed we need to free the memory
 
     char *texture_prefix = "texture_";
     for (int i = 0; i < strlen(texture_prefix); i++) {
@@ -1657,16 +1656,11 @@ bool load_texture(int texture_index, char *file_name) {
     int Bpp;
     t->texture.Memory = stbi_load(file_path, &t->texture.Width, &t->texture.Height, &Bpp, Bytes_Per_Pixel);
     if (t->texture.Memory == NULL) return false;
+    adjust_bpp(&t->texture, Bpp);
 
     t->element_side = t->texture.Height;
     t->elements     = t->texture.Width / t->element_side;
-
-    if (t->elements == 0) {
-        free(t->texture.Memory);
-        return false;
-    }
-
-    adjust_bpp(&t->texture, Bpp);
+    if (t->elements == 0) return false;
 
     // If the background is white than we make sure the alpha is 0. This is because
     // it might not be simple to produce textures with alpha in them for example if 
@@ -1688,8 +1682,12 @@ bool load_texture(int texture_index, char *file_name) {
         Pixels[p] = (A << 24) | (B << 16) | (G << 8) | (R << 0);
     }
 
+    // Remove "texture_" prefix
     file_name = file_name + strlen(texture_prefix);
+
+    // Remove file extension
     int dot_index = get_dot_index(file_name, file_name_size);
+    if (dot_index < 0) return false;
     file_name[dot_index] = '\0';
 
     strncpy(textures[total_textures].name, file_name, strlen(file_name));
@@ -1717,10 +1715,10 @@ int main(void) {
 
     for (int i = 0; i < Total_Caps; i++) {
         string filepath = "Caps/Cap " + to_string(i + 1) + ".png";
-        load_image(&caps_data[i], filepath.c_str(), true, true);
+        load_cap_image(&caps_data[i], filepath.c_str());
     }
     
-    char *path = "Textures/*.png";
+    char *path = "Textures/*.*";
     WIN32_FIND_DATA ffd;
     HANDLE texture_dir = FindFirstFile(path, &ffd);
     LARGE_INTEGER filesize;
@@ -1739,8 +1737,8 @@ int main(void) {
             }
         }
     } while (FindNextFile(texture_dir, &ffd) != 0);
-
     FindClose(texture_dir);
+    assert(total_textures); // Todo: if no textures are detected we crash, but we could keep going with the caps
 
     char file_name[file_name_size] = "";
     int save_counter = 1; // Todo: start counter at the last already saved image +1

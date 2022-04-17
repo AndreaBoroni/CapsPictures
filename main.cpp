@@ -13,6 +13,7 @@ UI:
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
     - recenter when the window changes size
+    - standardize options for caps vs. textures
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -1316,7 +1317,7 @@ v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
         compute_centers_hex(centers, settings.x_hex, settings.y_hex, settings.radius);
-        if (settings.shuffle_centers) shuffle(centers, *number_of_centers, 100);
+        if (settings.shuffle_centers && settings.centers_style != Random) shuffle(centers, *number_of_centers, 100);
     }
     return centers;
 }
@@ -1378,7 +1379,7 @@ bitmap create_image_texture(bitmap image) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
-    if (settings.shuffle_centers) shuffle(centers, number_of_centers, 100);
+    if (settings.shuffle_centers && settings.centers_style != Random) shuffle(centers, number_of_centers, 100); // Todo: get a better value for this
 
     Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 

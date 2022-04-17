@@ -846,7 +846,6 @@ struct General_Settings {
     int x_hex  = 10;
     int y_hex  = 10;
     int radius = 10;
-    bool shuffle_centers = false;
     
     // centers_grid is selected
     int x_grid = 10;
@@ -871,6 +870,7 @@ struct General_Settings {
     int adjusted_brightness = 50;
     int adjusted_hue        = 0;
 
+    bool shuffle_centers = false;
     bool allow_oversizing = false;
 
     int range_high = 1000;
@@ -894,7 +894,27 @@ void shuffle(v2 *array, int array_length, int shuffle_times) {
     }
 }
 
-void sort_by_birghtness(v2 *centers, Color *colors, float *brightness, int length, bool reverse) {
+void sort_caps_by_birghtness(v2 *centers, int *indexes, int length, bool reverse) {
+
+    for (int i = 0; i < length-1; i++) {
+        for (int j = 0; j < length-1-i; j++) {
+            bool condition = indexes[j] > indexes[j+1];
+            if (reverse) condition = indexes[j] < indexes[j+1];
+
+            if (condition) {
+                v2 temp_v = centers[j];
+                centers[j]   = centers[j+1];
+                centers[j+1] = temp_v;
+
+                int temp_i = indexes[j];
+                indexes[j]   = indexes[j+1];
+                indexes[j+1] = temp_i;
+            }
+        }
+    }
+}
+
+void sort_textures_by_birghtness(v2 *centers, Color *colors, float *brightness, int length, bool reverse) {
 
     for (int i = 0; i < length-1; i++) {
         for (int j = 0; j < length-1-i; j++) {
@@ -1055,7 +1075,6 @@ void crop_image(bitmap *image, RECT_f displayed_crop_rectangle) {
     int new_width  = crop_rectangle.right - crop_rectangle.left;
     int new_height = crop_rectangle.bottom - crop_rectangle.top;
 
-    // printf("%d %d", new_width, new_height);
     uint32 *new_memory = (uint32 *) malloc(new_width * new_height * Bytes_Per_Pixel);
     uint32 *old_memory = (uint32 *) image->Memory;
     for (int i = 0; i < new_width; i++) {
@@ -1337,7 +1356,10 @@ bitmap create_image_caps(bitmap image) {
         blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
     
-    // Todo: sort by brightness and darkness!!
+    if (settings.centers_style == Random && settings.render_centers_by != Randomness) {
+        sort_caps_by_birghtness(centers, indexes, number_of_centers, settings.render_centers_by != Brightness);
+    }
+
     int dim = 2 * radius * settings.scale;
     for (int i = 0; i < number_of_centers; i++) {
         blit_bitmap_to_bitmap(&result_bitmap, &caps_data[indexes[i]], centers[i].x - dim / 2, centers[i].y - dim / 2, dim, dim);
@@ -1387,8 +1409,8 @@ bitmap create_image_texture(bitmap image) {
         min_brightness = MIN(min_brightness, brightnesses[i]);
     }
 
-    if (settings.render_centers_by != Randomness) {
-        sort_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.render_centers_by != Brightness);
+    if (settings.centers_style == Random && settings.render_centers_by != Randomness) {
+        sort_textures_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.render_centers_by != Brightness);
     }
     
     bitmap result_bitmap;
@@ -1644,6 +1666,10 @@ bool load_texture(int texture_index, char *file_name) {
     }
 
     adjust_bpp(&t->texture, Bpp);
+
+    // If the background is white than we make sure the alpha is 0. This is because
+    // it might not be simple to produce textures with alpha in them for example if 
+    // you are using Paint.
     uint32 *Pixels = (uint32 *) t->texture.Memory;
     for (int p = 0; p < t->texture.Width * t->texture.Height; p++) {
         uint8 B = (Pixels[p] >> 16) & 0xff;
@@ -1945,11 +1971,6 @@ int main(void) {
             int y_hex_press = settings_panel.push_updown_counter("Vertical", default_palette, UpDown_(settings.y_hex));
             settings.y_hex = MAX(1, settings.y_hex + y_hex_press);
             if (y_hex_press != 0) compute_dimensions_from_y_hex(image);
-            
-            if (settings.allow_oversizing && settings.centers_style == Texture_Style) {
-                settings_panel.row();
-                settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
-            }
 
         } else if (settings.centers_style == Grid && settings.centers_settings_visible) {
             settings_panel.row(1, 0.25);
@@ -1983,6 +2004,9 @@ int main(void) {
             settings.total_centers = MAX(1, settings.total_centers + total_element_press * 10);
 
             settings_panel.row();
+            settings_panel.add_text("Render order:", BLUE);
+
+            settings_panel.row();
             int by_press;
             switch (settings.render_centers_by) {
                 case Randomness: by_press = settings_panel.push_selector("Randomly", default_palette);      break;
@@ -1992,7 +2016,6 @@ int main(void) {
             settings.render_centers_by += by_press;
             if (settings.render_centers_by == -1)                      settings.render_centers_by = Render_Centers_By_Count - 1;
             if (settings.render_centers_by == Render_Centers_By_Count) settings.render_centers_by = 0;
-
         }
 
         if (settings.centers_settings_visible) {
@@ -2023,6 +2046,9 @@ int main(void) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
+            settings_panel.row();
+            settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
+
         } else if (settings.caps_or_texture == Texture_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);
             
@@ -2043,15 +2069,19 @@ int main(void) {
 
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &settings.allow_oversizing);
-            if (!settings.allow_oversizing) settings.shuffle_centers = false;
 
             int elements = textures[settings.texture_selected].elements;
-            int max_range = (settings.allow_oversizing ? elements * SQRT_2 + 5 : elements) - 1;
+            int max_range = (settings.allow_oversizing ? elements * 2: elements) - 1;
             settings.range_low  = clamp(settings.range_low,  0, max_range);
             settings.range_high = clamp(settings.range_high, 0, max_range);
             
+            settings_panel.row(1, 0.25);
             settings_panel.row();
             settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
+            settings_panel.row(1, 0.25);
+
+            settings_panel.row();
+            settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
 
             settings_panel.row(3);
             settings_panel.add_text("Invert:", BLUE);

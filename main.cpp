@@ -12,6 +12,7 @@ using namespace std;
 UI:
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
+    - recenter when the window changes size
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -1636,6 +1637,15 @@ bool load_texture(int texture_index, char *file_name) {
         return false;
     }
 
+    uint32 *Pixels = (uint32 *) t->texture.Memory;
+    for (int p = 0; p < t->texture.Width * t->texture.Height; p++) {
+        uint8 B = (Pixels[p] >> 16) & 0xff;
+        uint8 G = (Pixels[p] >>  8) & 0xff;
+        uint8 R = (Pixels[p] >>  0) & 0xff;
+
+        if (B == 255 && G == 255 && R == 255) Pixels[p] = (0 << 24) | (B << 16) | (G << 8) | (R << 0);
+    }
+
     file_name = file_name + strlen(texture_prefix);
     int dot_index = get_dot_index(file_name, file_name_size);
     file_name[dot_index] = '\0';
@@ -1729,7 +1739,7 @@ int main(void) {
         GetCursorPos(&p);
         mouse_position = screen_to_window_position(p);
 
-        // Reset BAckground
+        // Reset Background
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
         
         int border = 5;

@@ -4,3 +4,4 @@ $ cat .gitignore
 *.bmp
 *.png
 *.gif
+*.cp

@@ -1513,13 +1513,13 @@ bool open_file_externally(char *file_name, int size_file_name) {
     return GetOpenFileName(&dialog_arguments);
 }
 
-int get_dot_index(char *file_name, int file_name_size) {
-    int result = -1;
-    for (int i = 0; i < file_name_size; i++) {
+int get_last_index(char *file_name, char item) {
+    int result = 0;
+    for (int i = 0; true; i++) {
         if (file_name[i] == '\0') return result;
-        if (file_name[i] == '.')  result = i;
+        if (file_name[i] == item)  result = i;
     }
-    return -1;
+    return 0;
 }
 
 struct Slider_Handler {
@@ -1685,7 +1685,7 @@ bool load_texture(int texture_index, char *file_name) {
     file_name = file_name + strlen(texture_prefix);
 
     // Remove file extension
-    int dot_index = get_dot_index(file_name, file_name_size);
+    int dot_index = get_last_index(file_name, '.');
     if (dot_index < 0) return false;
     file_name[dot_index] = '\0';
 
@@ -1696,6 +1696,127 @@ bool load_texture(int texture_index, char *file_name) {
     }
 
     return true;
+}
+
+bool save_file_into_memory(char *file_name, char *data, int file_size) {
+    
+    HANDLE file_handle;
+    file_handle = CreateFile(file_name, GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    
+    if(file_handle == INVALID_HANDLE_VALUE) {
+        printf("ERROR: unable to create file handle\n");
+        return false;
+    }
+
+    DWORD number_of_bytes_written, error;
+    bool success = WriteFile(file_handle, data, file_size, &number_of_bytes_written, NULL);
+    bool end_of_file_success = SetEndOfFile(file_handle);
+    CloseHandle(file_handle);
+
+    if(number_of_bytes_written != file_size) printf("Not everything was written!!\n");
+    
+    if (!success || !end_of_file_success) {
+        error = GetLastError();
+        printf("ERROR while reading the file %s. Error code: %d\n", file_name, error);
+        return false;
+    }
+    return true;
+}
+
+char *load_file_memory(char *file_name, unsigned int *size) {
+    char *buffer = NULL;
+    DWORD number_of_bytes_read, high_file_size, error;
+    HANDLE file_handle;
+
+    file_handle = CreateFile(file_name, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if(file_handle == INVALID_HANDLE_VALUE) {
+        printf("ERROR: unable to create file handle\n");
+        return NULL;
+    }
+
+    *size = GetFileSize(file_handle, &high_file_size);
+
+    buffer = (char *) malloc(*size);
+    bool result = ReadFile(file_handle, buffer, *size, &number_of_bytes_read, NULL);
+    CloseHandle(file_handle);
+
+    if (!result) {
+        error = GetLastError();
+        printf("ERROR while reading the file %s. Error code: %d\n", file_name, error);
+    }
+    return buffer;
+}
+
+void save_settings(General_Settings settings, char *full_file_name) {
+    
+    int slash_index = get_last_index(full_file_name, '\\');
+    char file_name[file_name_size];
+    strcpy(file_name, full_file_name + slash_index + 1);
+
+    char *path = "Settings/*.cp";
+    WIN32_FIND_DATA found_data;
+    HANDLE settings_directory = FindFirstFile(path, &found_data);
+
+    int matched_names = 0;
+    do {
+        if (found_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        
+        char *settings_file_name = &found_data.cFileName[0];
+        int dot_index = get_last_index(file_name, '.'); 
+        if (dot_index + 2 > strlen(settings_file_name)) continue; // file name plus ".cp"
+
+        bool name_matches = true;
+        for (int i = 0; i < dot_index - 1; i++) {
+            if (file_name[i] != settings_file_name[i]) name_matches = false;
+        }
+        if (settings_file_name[dot_index]     != '.') continue;
+        if (settings_file_name[dot_index + 1] != 'c') continue;
+        if (settings_file_name[dot_index + 2] != 'p') continue;
+
+        if (name_matches) matched_names++;
+    } while (FindNextFile(settings_directory, &found_data) != 0);
+    
+    FindClose(settings_directory);
+
+    auto settings_directory_data = GetFileAttributes("Settings\\");
+    if (settings_directory_data == INVALID_FILE_ATTRIBUTES) {
+        char path_name[file_name_size];
+        GetCurrentDirectory(file_name_size, path_name);
+        strcat(path_name, "\\Settings");
+        
+        if (!CreateDirectoryA(path_name, NULL)) return;
+    }
+
+    char settings_file_name[strlen(file_name) + 3] = "Settings\\";
+    strcat(settings_file_name, file_name);
+    settings_file_name[get_last_index(settings_file_name, '.')] = '\0';
+
+    if (matched_names > 0) strcat(settings_file_name, to_string(matched_names).c_str());
+    strcat(settings_file_name, ".cp");
+
+    int size = sizeof(settings);
+    save_file_into_memory(settings_file_name, (char *) &settings, size);
+}
+
+void load_settings() {
+    char file_name[file_name_size];
+    bool success = open_file_externally(file_name, file_name_size);
+
+    int dot_index = get_last_index(file_name, '.');
+    if (dot_index == 0) return;
+    if (file_name[dot_index + 1] != 'c') return;
+    if (file_name[dot_index + 2] != 'p') return;
+
+    unsigned int file_size;
+    char *settings_data = load_file_memory(file_name, &file_size);
+
+    if (settings_data == NULL) return;
+    if (file_size != sizeof(General_Settings)) {
+        free(settings_data);
+        return;
+    }
+
+    memcpy(&settings, settings_data, sizeof(General_Settings));
 }
 
 int main(void) {
@@ -1720,7 +1841,6 @@ int main(void) {
     char *path = "Textures/*.*";
     WIN32_FIND_DATA ffd;
     HANDLE texture_dir = FindFirstFile(path, &ffd);
-    LARGE_INTEGER filesize;
 
     do {
         if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
@@ -1911,6 +2031,8 @@ int main(void) {
 
                 source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+
+                save_settings(settings, file_name);
                 
                 saved_changes = false;
             }
@@ -2108,7 +2230,7 @@ int main(void) {
         int gif_press = settings_panel.push_button("Make GIF", default_palette, 3);
         if (gif_press == Button_Left_Clicked) {
 
-            int dot_index = get_dot_index(file_name, file_name_size);
+            int dot_index = get_last_index(file_name, '.');
             assert(dot_index >= 0);
 
             char save_file_name[file_name_size + 3];
@@ -2154,7 +2276,7 @@ int main(void) {
         Color_Palette palette = saved_changes ? no_save_palette : save_palette;
         int save_click_result = settings_panel.push_button("Save", palette, 3);
         if (save_click_result == Button_Left_Clicked && result_bitmap.Memory) {
-            int dot_index = get_dot_index(file_name, file_name_size);
+            int dot_index = get_last_index(file_name, '.');
             assert(dot_index >= 0);
 
             char save_file_name[file_name_size + 3];
@@ -2191,6 +2313,13 @@ int main(void) {
                 saved_changes = true;
             }
         }
+
+        settings_panel.row(1, 0.25);
+        settings_panel.row();
+        if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
+            load_settings();
+        }
+
         
         settings_panel.row(1, 0.25);
         settings_panel.row(3);

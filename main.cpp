@@ -12,7 +12,6 @@ using namespace std;
 UI:
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
-    - recenter when the window changes size
     - standardize options for caps vs. textures
 */
 
@@ -1663,7 +1662,7 @@ bool load_texture(int texture_index, char *file_name) {
     if (t->elements == 0) return false;
 
     // If the background is white than we make sure the alpha is 0. This is because
-    // it might not be simple to produce textures with alpha in them for example if 
+    // it might not be simple to produce textures with alpha in them, for example if 
     // you are using Paint.
     uint32 *Pixels = (uint32 *) t->texture.Memory;
     for (int p = 0; p < t->texture.Width * t->texture.Height; p++) {
@@ -1724,19 +1723,19 @@ int main(void) {
     LARGE_INTEGER filesize;
 
     do {
-        if (!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            char *file_name = &ffd.cFileName[0];
+        if (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        char *file_name = &ffd.cFileName[0];
 
-            bool success = load_texture(total_textures, file_name);
-            if (!success) continue;
+        bool success = load_texture(total_textures, file_name);
+        if (!success) continue;
 
-            total_textures++;
-            if (total_textures == MAX_TEXTURES) {
-                printf("You have too many textures!");
-                break;
-            }
+        total_textures++;
+        if (total_textures == MAX_TEXTURES) {
+            printf("You have too many textures!");
+            break;
         }
     } while (FindNextFile(texture_dir, &ffd) != 0);
+    
     FindClose(texture_dir);
     assert(total_textures); // Todo: if no textures are detected we crash, but we could keep going with the caps
 
@@ -1751,6 +1750,15 @@ int main(void) {
     bool color_picker_active = false;
 
     while (true) {
+
+        // Handle Messages
+        auto result = handle_window_messages();
+        if (result == -1) return 0;
+
+        // Handle Inputs        
+        POINT p;
+        GetCursorPos(&p);
+        mouse_position = screen_to_window_position(p);
 
         // Compute sizes
         int main_border  = 40;
@@ -1769,15 +1777,6 @@ int main(void) {
         int processed_left = settings_left + settings_width + inner_border;
 
         start_sliders();
-
-        // Handle Messages
-        auto result = handle_window_messages();
-        if (result == -1) return 0;
-
-        // Handle Inputs        
-        POINT p;
-        GetCursorPos(&p);
-        mouse_position = screen_to_window_position(p);
 
         // Reset Background
         memset(Main_Buffer.Memory, 0, Main_Buffer.Width * Main_Buffer.Height * Bytes_Per_Pixel);
@@ -1851,6 +1850,18 @@ int main(void) {
             if (result_bitmap.Memory) swap_red_and_blue_channels(&result_bitmap);
         }
 
+        if (changed_size) {
+            if (image.Memory) {
+                v2 c = {(render_source_rect.right + render_source_rect.left) / 2, (render_source_rect.bottom + render_source_rect.top) / 2};
+                update_zoom(&source_zoom_rectangle, render_source_rect, 0, c);
+            }
+            if (result_bitmap.Memory) {
+                v2 c = {(render_processed_rect.right + render_processed_rect.left) / 2, (render_processed_rect.bottom + render_processed_rect.top) / 2};
+                update_zoom(&processed_zoom_rectangle, render_processed_rect, 0, c);
+            }
+            changed_size = false;
+        }
+
         // Process clicks, mousewheel and render bitmaps
         if (source_button_result == Button_Left_Clicked) {
             char temp_file_name[file_name_size];
@@ -1898,8 +1909,8 @@ int main(void) {
                     result_bitmap = create_image_texture(image);
                 }
 
-                processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
                 source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
+                processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
                 
                 saved_changes = false;
             }

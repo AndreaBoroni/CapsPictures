@@ -881,6 +881,7 @@ struct General_Settings {
     bool invert_alpha = false;
 };
 General_Settings settings;
+General_Settings last_saved_settings;
 
 void shuffle(v2 *array, int array_length, int shuffle_times) {
     for (int i = 0; i < shuffle_times; i++) {
@@ -1513,6 +1514,15 @@ bool open_file_externally(char *file_name, int size_file_name) {
     return GetOpenFileName(&dialog_arguments);
 }
 
+bool strings_match(char *s1, char *s2, int length = -1) {
+    if (length < 0) length = strlen(s1);
+
+    for (int i = 0; i < length; i++)
+        if (s1[i] != s2[i]) return false;
+
+    return true;
+}
+
 int get_last_index(char *file_name, char item) {
     int result = 0;
     for (int i = 0; true; i++) {
@@ -1747,13 +1757,15 @@ char *load_file_memory(char *file_name, unsigned int *size) {
     return buffer;
 }
 
+char extension[] = ".settings";
+
 void save_settings(General_Settings settings, char *full_file_name) {
     
     int slash_index = get_last_index(full_file_name, '\\');
     char file_name[file_name_size];
     strcpy(file_name, full_file_name + slash_index + 1);
 
-    char *path = "Settings/*.cp";
+    char *path = "Settings/*.settings";
     WIN32_FIND_DATA found_data;
     HANDLE settings_directory = FindFirstFile(path, &found_data);
 
@@ -1762,18 +1774,18 @@ void save_settings(General_Settings settings, char *full_file_name) {
         if (found_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
         
         char *settings_file_name = &found_data.cFileName[0];
+
         int dot_index = get_last_index(file_name, '.'); 
-        if (dot_index + 2 > strlen(settings_file_name)) continue; // file name plus ".cp"
+        if (dot_index + strlen(extension) > strlen(settings_file_name)) continue;
 
-        bool name_matches = true;
-        for (int i = 0; i < dot_index - 1; i++) {
-            if (file_name[i] != settings_file_name[i]) name_matches = false;
-        }
-        if (settings_file_name[dot_index]     != '.') continue;
-        if (settings_file_name[dot_index + 1] != 'c') continue;
-        if (settings_file_name[dot_index + 2] != 'p') continue;
+        bool match = strings_match(file_name, settings_file_name, dot_index - 1);
+        if (!match) continue;
+        
+        int settings_dot_index = get_last_index(settings_file_name, '.');
+        match = strings_match(extension, settings_file_name + settings_dot_index, strlen(extension));
+        if (!match) continue;
 
-        if (name_matches) matched_names++;
+        matched_names++;
     } while (FindNextFile(settings_directory, &found_data) != 0);
     
     FindClose(settings_directory);
@@ -1787,12 +1799,12 @@ void save_settings(General_Settings settings, char *full_file_name) {
         if (!CreateDirectoryA(path_name, NULL)) return;
     }
 
-    char settings_file_name[strlen(file_name) + 3] = "Settings\\";
+    char settings_file_name[strlen(file_name) + strlen(extension)] = "Settings\\";
     strcat(settings_file_name, file_name);
     settings_file_name[get_last_index(settings_file_name, '.')] = '\0';
 
     if (matched_names > 0) strcat(settings_file_name, to_string(matched_names).c_str());
-    strcat(settings_file_name, ".cp");
+    strcat(settings_file_name, ".settings");
 
     int size = sizeof(settings);
     save_file_into_memory(settings_file_name, (char *) &settings, size);
@@ -1803,9 +1815,8 @@ void load_settings() {
     bool success = open_file_externally(file_name, file_name_size);
 
     int dot_index = get_last_index(file_name, '.');
-    if (dot_index == 0) return;
-    if (file_name[dot_index + 1] != 'c') return;
-    if (file_name[dot_index + 2] != 'p') return;
+    bool matched = strings_match(extension, file_name + dot_index, strlen(extension));
+    if (!matched) return;
 
     unsigned int file_size;
     char *settings_data = load_file_memory(file_name, &file_size);
@@ -1817,6 +1828,7 @@ void load_settings() {
     }
 
     memcpy(&settings, settings_data, sizeof(General_Settings));
+    free(settings_data);
 }
 
 int main(void) {
@@ -2032,8 +2044,10 @@ int main(void) {
                 source_zoom_rectangle    = reset_zoom_rectangle(image, render_source_rect);
                 processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
 
-                save_settings(settings, file_name);
-                
+                if (memcmp(&settings, &last_saved_settings, sizeof(General_Settings)) != 0) {
+                    save_settings(settings, file_name);  
+                    last_saved_settings = settings;
+                }
                 saved_changes = false;
             }
         } else if (processed_button_result == Button_Right_Clicked) {
@@ -2315,7 +2329,7 @@ int main(void) {
         }
 
         settings_panel.row(1, 0.25);
-        settings_panel.row();
+        settings_panel.row(1, 2);
         if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
             load_settings();
         }

@@ -12,7 +12,8 @@ using namespace std;
 UI:
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
-    - standardize options for caps vs. textures
+    - standardize options for caps vs. textures (in progress):
+        - use adjusted brightness and adjusted hue in the caps pictures
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -229,9 +230,10 @@ struct Color_Palette {
     Color background_color;
 };
 
+//                               btn         h_btn  val    h_val  txt        h_txt, bg
 Color_Palette default_palette = {DARK_WHITE, WHITE, BLUE,  BLUE,  DARK_BLUE, BLUE,  BLACK};
 Color_Palette slider_palette  = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE,  BLACK};
-Color_Palette header_palette  = {LIGHT_GRAY, WHITE, BLACK, BLACK, BLACK,     BLUE,  GRAY};
+Color_Palette header_palette  = {LIGHT_GRAY, WHITE, BLACK, BLACK, WHITE,     BLACK, GRAY};
 Color_Palette save_palette    = {DARK_WHITE, WHITE, BLACK, BLACK, BLACK,     BLACK, BLUE};
 Color_Palette no_save_palette = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE,  BLACK};
 
@@ -588,7 +590,7 @@ void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
 }
 */
 
-void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index, bool invert_alpha) {
+void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index) {
 
     int x = center.x - w / 2;
     int y = center.y - w / 2;
@@ -623,11 +625,6 @@ void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, C
             uint32 source_pixel = Texels[x_bitmap + y_bitmap * t.texture.Width + element_index * t.element_side];
 
             float SA = ((source_pixel >> 24) & 0xff) / 255.0;
-            // uint8 TR =  (source_pixel >> 16) & 0xff;
-            // uint8 TG =  (source_pixel >>  8) & 0xff;
-            // uint8 TB =  (source_pixel >>  0) & 0xff;
-            // if (TR == 255 && TG == 255 && TB == 255) SA = 0;
-            if (invert_alpha) SA = 1 - SA;
             uint8 SR = color.R * SA;
             uint8 SG = color.G * SA;
             uint8 SB = color.B * SA;
@@ -808,10 +805,17 @@ enum Centers_Style {
 };
 
 enum Render_Centers_By {
-    Randomness,
+    Randomly,
     Brightness,
     Darkness,
     Render_Centers_By_Count,
+};
+
+enum Size_Settings {
+    Not_Inverted_Size,
+    Inverted_Size,
+    Random_Size,
+    Size_Settings_Count,
 };
 
 #define Caps_Style    0
@@ -855,7 +859,7 @@ struct General_Settings {
     // centers_random is selected
     int total_centers = 2000;
     int random_radius = 10;
-    int render_centers_by = Randomness;
+    int render_centers_by = Randomly;
 
     // Style
     int centers_style = Grid;
@@ -873,12 +877,10 @@ struct General_Settings {
     bool shuffle_centers = false;
     bool allow_oversizing = false;
 
-    int range_high = 1000;
     int range_low  = 0;
+    int range_high = 1000;
 
-    bool random_size  = false;
-    bool invert_size  = false;
-    bool invert_alpha = false;
+    int size_style = Not_Inverted_Size;
 };
 General_Settings settings;
 General_Settings last_saved_settings;
@@ -895,7 +897,7 @@ void shuffle(v2 *array, int array_length, int shuffle_times) {
     }
 }
 
-void sort_caps_by_birghtness(v2 *centers, int *indexes, int length, bool reverse) {
+void sort_caps(v2 *centers, int *indexes, int length, bool reverse) {
 
     for (int i = 0; i < length-1; i++) {
         for (int j = 0; j < length-1-i; j++) {
@@ -1316,8 +1318,10 @@ bitmap create_image_caps(bitmap image) {
     v2 *centers = get_centers(image, &number_of_centers, &radius);
     
     int *indexes;
-    if (settings.by_color) indexes = compute_indexes_by_color(image, centers, number_of_centers, radius);
-    else                   indexes = compute_indexes(image, centers, number_of_centers, radius);
+    if (settings.by_color)
+        indexes = compute_indexes_by_color(image, centers, number_of_centers, radius);
+    else
+        indexes = compute_indexes(image, centers, number_of_centers, radius);
     
     if (settings.inverse_caps) {
         for (int i = 0; i < number_of_centers; i++) indexes[i] = Total_Caps - indexes[i] - 1;
@@ -1345,8 +1349,8 @@ bitmap create_image_caps(bitmap image) {
         blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
     
-    if (settings.centers_style == Random && settings.render_centers_by != Randomness) {
-        sort_caps_by_birghtness(centers, indexes, number_of_centers, settings.render_centers_by != Brightness);
+    if (settings.centers_style == Random && settings.render_centers_by != Randomly) {
+        sort_caps(centers, indexes, number_of_centers, settings.render_centers_by != Brightness);
     }
 
     int dim = 2 * radius * settings.scale;
@@ -1367,7 +1371,7 @@ bitmap create_image_texture(bitmap image) {
     
     int number_of_centers, radius;
     v2 *centers = get_centers(image, &number_of_centers, &radius);
-    if (settings.shuffle_centers && settings.centers_style != Random) shuffle(centers, number_of_centers, 100); // Todo: get a better value for this
+    if (settings.shuffle_centers) shuffle(centers, number_of_centers, 100); // Todo: get a better value for this
 
     Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 
@@ -1380,17 +1384,10 @@ bitmap create_image_texture(bitmap image) {
 
         brightnesses[i] = (colors[i].R + colors[i].G + colors[i].B) / 3.0;
 
-        if (false) {
-            int b = (settings.adjusted_brightness - 50) * 255.0 / 49.0;
-            colors[i].R = clamp((int) (colors[i].R + b), 0, 255);
-            colors[i].G = clamp((int) (colors[i].G + b), 0, 255);
-            colors[i].B = clamp((int) (colors[i].B + b), 0, 255);
-        } else {
-            float b = (float) settings.adjusted_brightness / 50.0;
-            colors[i].R = clamp((int) (colors[i].R * b), 0, 255);
-            colors[i].G = clamp((int) (colors[i].G * b), 0, 255);
-            colors[i].B = clamp((int) (colors[i].B * b), 0, 255);
-        }
+        float b = (float) settings.adjusted_brightness / 50.0;
+        colors[i].R = clamp((int) (colors[i].R * b), 0, 255);
+        colors[i].G = clamp((int) (colors[i].G * b), 0, 255);
+        colors[i].B = clamp((int) (colors[i].B * b), 0, 255);
 
         if (settings.adjusted_hue) colors[i] = shift_hue(colors[i], settings.adjusted_hue);
 
@@ -1398,7 +1395,7 @@ bitmap create_image_texture(bitmap image) {
         min_brightness = MIN(min_brightness, brightnesses[i]);
     }
 
-    if (settings.centers_style == Random && settings.render_centers_by != Randomness) {
+    if (settings.centers_style == Random && settings.render_centers_by != Randomly) {
         sort_textures_by_birghtness(centers, colors, brightnesses, number_of_centers, settings.render_centers_by != Brightness);
     }
     
@@ -1424,12 +1421,12 @@ bitmap create_image_texture(bitmap image) {
     for (int i = 0; i < number_of_centers; i++) {
         // lower is less bright
         int index = 0;
-        if (!settings.random_size){
+        if (settings.size_style != Random_Size) {
             float b = (brightnesses[i] - min_brightness) / (max_brightness - min_brightness) * 255.0;
             index = b / 255.0 * (settings.range_high - 1 - settings.range_low) + settings.range_low;
-            if (settings.invert_size) index = settings.range_high - 1 + settings.range_low - index;
+            if (settings.size_style == Inverted_Size) index = settings.range_high - 1 + settings.range_low - index;
             index = clamp(index, settings.range_low, settings.range_high - 1);
-        } else if (settings.random_size) {
+        } else {
             index = rand() % (settings.range_high - 1 - settings.range_low) + settings.range_low;
             index = clamp(index, settings.range_low, settings.range_high - 1);
         }
@@ -1441,7 +1438,7 @@ bitmap create_image_texture(bitmap image) {
             index = t->elements - 1;
         }
         
-        blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected, settings.invert_alpha);
+        blit_texture_to_bitmap(&result_bitmap, index, centers[i], w, colors[i], settings.texture_selected);
     }
 
     memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
@@ -2144,7 +2141,7 @@ int main(void) {
             settings_panel.row();
             int by_press;
             switch (settings.render_centers_by) {
-                case Randomness: by_press = settings_panel.push_selector("Randomly", default_palette);      break;
+                case Randomly: by_press = settings_panel.push_selector("Randomly", default_palette);      break;
                 case Brightness: by_press = settings_panel.push_selector("By Brightness", default_palette); break;
                 case Darkness:   by_press = settings_panel.push_selector("By Darkness", default_palette);   break;
             }
@@ -2159,12 +2156,23 @@ int main(void) {
             if (settings.scale >= 2) scale_press *= 0.5;
             else                     scale_press *= 0.1;
             settings.scale = clamp(settings.scale + scale_press, 0.1, 10);
+
+            if (settings.centers_style != Random) {
+                settings_panel.row();
+                settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
+            }
+            
+            settings_panel.row();
+            settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
+
+            settings_panel.row();
+            settings_panel.push_slider("Hue Shift", slider_palette, &settings.adjusted_hue, -180, 180, new_slider());
         }
         
         settings_panel.row(1, 0.5);
         settings_panel.row(2);
         bool style_header_pushed = false;
-        style_header_pushed |= settings_panel.push_header("Caps",    header_palette,    Caps_Style, &settings.caps_or_texture);
+        style_header_pushed |= settings_panel.push_header("Caps",    header_palette, Caps_Style,    &settings.caps_or_texture);
         style_header_pushed |= settings_panel.push_header("Texture", header_palette, Texture_Style, &settings.caps_or_texture);
         if (style_header_pushed) settings.style_settings_visible = !settings.style_settings_visible;
 
@@ -2181,9 +2189,6 @@ int main(void) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
-            settings_panel.row();
-            settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
-
         } else if (settings.caps_or_texture == Texture_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);
             
@@ -2195,12 +2200,6 @@ int main(void) {
                 if (settings.texture_selected == -1)             settings.texture_selected = total_textures - 1;
                 if (settings.texture_selected == total_textures) settings.texture_selected = 0;
             }
-
-            settings_panel.row();
-            settings_panel.push_slider("Brightness", slider_palette, &settings.adjusted_brightness, 1, 99, new_slider());
-
-            settings_panel.row();
-            settings_panel.push_slider("Hue Shift", slider_palette, &settings.adjusted_hue, -180, 180, new_slider());
 
             settings_panel.row();
             settings_panel.push_toggler("Allow Oversizing", default_palette, &settings.allow_oversizing);
@@ -2216,11 +2215,15 @@ int main(void) {
             settings_panel.row(1, 0.25);
 
             settings_panel.row();
-            settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
-
-            settings_panel.row(2);
-            settings_panel.push_toggler("Invert Size", default_palette, &settings.invert_size);
-            settings_panel.push_toggler("Random size", default_palette, &settings.random_size);
+            int size_press;
+            switch (settings.size_style) {
+                case Not_Inverted_Size: size_press = settings_panel.push_selector("Normal Size",   default_palette); break;
+                case Inverted_Size:     size_press = settings_panel.push_selector("Inverted Size", default_palette); break;
+                case Random_Size:       size_press = settings_panel.push_selector("Random Size",   default_palette); break;
+            }
+            settings.size_style += size_press;
+            if (settings.size_style == -1)                  settings.size_style = Size_Settings_Count - 1;
+            if (settings.size_style == Size_Settings_Count) settings.size_style = 0;
         }
 
         settings_panel.row(1, 0.5);
@@ -2317,7 +2320,6 @@ int main(void) {
         if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
             load_settings();
         }
-
         
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
@@ -2474,7 +2476,9 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 
 void Panel::add_text(char *text, Color c, int override_font_size) {
     int text_font_size = override_font_size != -1 ? override_font_size : font_size;
-    render_text(text, strlen(text), text_font_size, get_current_rect(), c);
+    
+    RECT draw_rect = get_current_rect();
+    render_text(text, strlen(text), text_font_size, draw_rect, c);
 
     at_x += column_width;
 }
@@ -2485,8 +2489,13 @@ bool Panel::push_header(char *text, Color_Palette palette, int header, int *curr
 
     Color text_color = palette.text_color;
     Color background_color = palette.background_color;
-    if (header == (*current_header)) background_color = palette.highlight_button_color;
-    else if (highlighted)            background_color = palette.button_color;
+    if (header == (*current_header)) {
+        background_color = palette.highlight_button_color;
+        text_color = palette.highlight_text_color;
+    } else if (highlighted) {
+        background_color = palette.button_color;
+        text_color = palette.highlight_text_color;
+    }
     
     render_filled_rectangle(text_rect, background_color);
     render_text(text, strlen(text), font_size, text_rect, text_color);

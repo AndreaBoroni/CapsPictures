@@ -12,8 +12,7 @@ using namespace std;
 UI:
     - Better rendering in the window
     - Fix zooming (mostly fix but not completely, it still shifts some)
-    - standardize options for caps vs. textures (in progress):
-        - use adjusted brightness and adjusted hue in the caps pictures
+    - standardize options for caps vs. textures (in progress)
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -230,7 +229,7 @@ struct Color_Palette {
     Color background_color;
 };
 
-//                               btn         h_btn  val    h_val  txt        h_txt, bg
+//                               btn         h_btn  val    h_val  txt        h_txt  bg
 Color_Palette default_palette = {DARK_WHITE, WHITE, BLUE,  BLUE,  DARK_BLUE, BLUE,  BLACK};
 Color_Palette slider_palette  = {DARK_WHITE, WHITE, BLACK, BLACK, DARK_BLUE, BLUE,  BLACK};
 Color_Palette header_palette  = {LIGHT_GRAY, WHITE, BLACK, BLACK, WHITE,     BLACK, GRAY};
@@ -415,14 +414,14 @@ LRESULT CALLBACK main_window_callback(HWND Window, UINT Message, WPARAM WParam, 
             break;
         case WM_MOUSEWHEEL: {
             auto key_state = GET_KEYSTATE_WPARAM(WParam);
-            auto delta     = GET_WHEEL_DELTA_WPARAM(WParam);
-
             if (key_state) break;
+
+            auto delta = GET_WHEEL_DELTA_WPARAM(WParam);
             mousewheel_counter += delta;
         } break;
-        default:
+        default: {
             Result = DefWindowProc(Window, Message, WParam, LParam);
-            break;
+        } break;
     }
 
     return Result;
@@ -560,35 +559,6 @@ void blit_bitmap_to_bitmap(bitmap *Dest, bitmap *Source, int x, int y, int width
         Row += Dest_Pitch;
     }
 }
-
-/* Not used
-void blit_rectangle_to_bitmap(bitmap *Dest, Color color, RECT rect) {
-
-    int starting_x = MAX(rect.left, 0);
-    int starting_y = MAX(rect.top,  0);
-    int ending_x   = MIN(rect.right,  Dest->Width);
-    int ending_y   = MIN(rect.bottom, Dest->Height);
-    
-    if (starting_x > Dest->Width)  return;
-    if (starting_y > Dest->Height) return;
-    if (ending_x < 0) return;
-    if (ending_y < 0) return;
-
-    uint32 c = (color.A << 24) | (color.R << 16) | (color.G << 8) | color.B;
-
-    int Dest_Pitch = Dest->Width * Bytes_Per_Pixel;
-    uint8 *Row = Dest->Memory;
-    Row += starting_x * Bytes_Per_Pixel + starting_y * Dest_Pitch;
-    for (int Y = starting_y; Y < ending_y; Y++) {
-        uint32 *Pixel = (uint32 *)Row;     
-        for (int X = starting_x; X < ending_x; X++) {
-            *Pixel = c;
-            Pixel++;
-        }
-        Row += Dest_Pitch;
-    }
-}
-*/
 
 void blit_texture_to_bitmap(bitmap *Dest, int element_index, v2 center, int w, Color color, int texture_index) {
 
@@ -969,7 +939,7 @@ int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radiu
     return indexes;
 }
 
-int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius) {
+int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius, int adjusted_brightness, int adjusted_hue) {
 
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
     assert(indexes);
@@ -981,22 +951,24 @@ int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, 
 
     for (int i = 0; i < number_of_centers; i++) {
         Color c = compute_color_average(image, centers[i].x, centers[i].y, radius);
-        uint8 R_value = c.R;
-        uint8 G_value = c.G;
-        uint8 B_value = c.B;
+        if (adjusted_hue != 0) c = shift_hue(c, adjusted_hue);
 
-        float min_distance = 1;
+        float b = (float) settings.adjusted_brightness / 50.0;
+        uint8 R = clamp((int) (c.R * b), 0, 255);
+        uint8 G = clamp((int) (c.G * b), 0, 255);
+        uint8 B = clamp((int) (c.B * b), 0, 255);
+
+        float min_distance = 255.0 * 255.0 * 255.0;
         int   min_index    = -1;
         for (int j = 0; j < Total_Caps; j++) {
-            float distance = (caps_colors[j].R - R_value) * (caps_colors[j].R - R_value) +
-                             (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value) +
-                             (caps_colors[j].B - B_value) * (caps_colors[j].B - B_value);
-            distance /= 3.0 * 255.0 * 255.0;
-            
+            float distance;
             if (settings.hard_max) {
-                distance = MAX((caps_colors[j].R - R_value) * (caps_colors[j].R - R_value), (caps_colors[j].G - G_value) * (caps_colors[j].G - G_value));
-                distance = MAX((caps_colors[j].B - B_value) * (caps_colors[j].B - B_value), distance);
-                distance /= 255.0 * 255.0;
+                distance = MAX((caps_colors[j].R - R) * (caps_colors[j].R - R), (caps_colors[j].G - G) * (caps_colors[j].G - G));
+                distance = MAX((caps_colors[j].B - B) * (caps_colors[j].B - B), distance);
+            } else {
+                distance = (caps_colors[j].R - R) * (caps_colors[j].R - R) +
+                           (caps_colors[j].G - G) * (caps_colors[j].G - G) +
+                           (caps_colors[j].B - B) * (caps_colors[j].B - B);
             }
 
             if (distance <= min_distance) {
@@ -1319,7 +1291,7 @@ bitmap create_image_caps(bitmap image) {
     
     int *indexes;
     if (settings.by_color)
-        indexes = compute_indexes_by_color(image, centers, number_of_centers, radius);
+        indexes = compute_indexes_by_color(image, centers, number_of_centers, radius, settings.adjusted_brightness, settings.adjusted_hue);
     else
         indexes = compute_indexes(image, centers, number_of_centers, radius);
     
@@ -1389,7 +1361,7 @@ bitmap create_image_texture(bitmap image) {
         colors[i].G = clamp((int) (colors[i].G * b), 0, 255);
         colors[i].B = clamp((int) (colors[i].B * b), 0, 255);
 
-        if (settings.adjusted_hue) colors[i] = shift_hue(colors[i], settings.adjusted_hue);
+        if (settings.adjusted_hue != 0) colors[i] = shift_hue(colors[i], settings.adjusted_hue);
 
         max_brightness = MAX(max_brightness, brightnesses[i]);
         min_brightness = MIN(min_brightness, brightnesses[i]);

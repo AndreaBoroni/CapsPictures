@@ -2656,12 +2656,9 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
     
     bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !(left_button_down && handled_press_left);
     
-    float value_float = (float) (mouse_position.x - slider_rect.left) / get_w(slider_rect);
-    value_float = clamp(value_float, 0, 1);
-    value_float = min_v + value_float * (max_v - min_v);
-    int value = value_float;
-    if (value_float - value > 0.5) value += 1;
-    bool high_is_closer = abs(value_float - *low_value) > abs(value_float - *high_value);
+    float value_0_to_1 = clamp((float) (mouse_position.x - slider_rect.left) / get_w(slider_rect), 0, 1);
+    int value = min_v + value_0_to_1 * (max_v - min_v);
+    bool high_is_closer = abs(value - *low_value) > abs(value - *high_value);
 
     Color high_slider_color = palette.button_color;
     Color low_slider_color  = palette.button_color;
@@ -2681,17 +2678,16 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
     render_filled_rectangle(low_pos_rect,  low_slider_color);
     render_text(text, text_length, font_size, text_rect, text_color);
     
-    if (!left_button_down) sliders.pressing_a_slider = false;
-    else if (sliders.pressing_a_slider) {
+    if (!left_button_down) {
+        sliders.pressing_a_slider = false;
+    } else if (sliders.pressing_a_slider) {
         if (sliders.which_slider_is_pressed == slider_order) {
             if (sliders.high_slider_pressed) {
                 *high_value = value;
-                int max_low = *low_value + 1;
-                *high_value = MAX(*high_value, max_low);
+                *high_value = MAX(*high_value, *low_value);
             } else {
                 *low_value = value;
-                int min_high = *high_value - 1;
-                *low_value = MIN(*low_value, min_high);
+                *low_value = MIN(*low_value, *high_value);
             }
         }
     } else if (!handled_press_left) {

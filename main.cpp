@@ -2181,11 +2181,9 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &settings.inverse_caps);
             
-            settings_panel.row();
+            settings_panel.row(2);
             settings_panel.push_toggler("By Color", default_palette, &settings.by_color);
             if (settings.by_color) {
-                settings_panel.row();
-                settings_panel.indent(0.05);
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
@@ -2376,10 +2374,10 @@ int main(void) {
 }
 
 void Panel::row(int columns, float height_factor) {
+    // First you advance the at_y with the previous row_height
     at_y += row_height;
     at_x  = left_x;
 
-    // First you advance the at_y with the previous row_height
     row_height   = base_height * height_factor;
     column_width = base_width / columns;
 }
@@ -2633,25 +2631,28 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
 }
 
 bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value, int *high_value, int min_v, int max_v, int slider_order) {
-    int text_length = strlen(text);
     int initial_high_value = *high_value;
     int initial_low_value  = *low_value;
 
-    RECT slider_rect = get_rect(at_x,                    at_y, column_width / 2, row_height);
-    RECT text_rect   = get_rect(at_x + column_width / 2, at_y, column_width / 2, row_height);
+    int text_length  = strlen(text);
+    int text_width   = (text_length + 2) * Font.advance * Font.scale[font_size];
+    int slider_width = column_width - text_width;
+
+    RECT slider_rect = get_rect(at_x,                at_y, slider_width, row_height);
+    RECT text_rect   = get_rect(at_x + slider_width, at_y, text_width,   row_height);
     
-    int  thickness   = 2;
-    int  slider_height = get_h(slider_rect) - thickness * 2;
-    int  slider_width  = slider_height * 0.3;
+    int thickness = 2;
+    int slider_height    = get_h(slider_rect) - thickness * 2;
+    int slider_thickness = slider_height * 0.3;
     RECT line_rect = get_rect(slider_rect.left, (slider_rect.top + slider_rect.bottom - thickness) / 2, get_w(slider_rect), thickness);
 
     float high_pos = (float) (*high_value - min_v) / (float) (max_v - min_v);
     float low_pos  = (float) (*low_value  - min_v) / (float) (max_v - min_v);
-    int high_slider_position = slider_rect.left + (get_w(slider_rect) - slider_width) * high_pos;
-    int low_slider_position  = slider_rect.left + (get_w(slider_rect) - slider_width) * low_pos;
+    int high_slider_position = slider_rect.left + (get_w(slider_rect) - slider_thickness) * high_pos;
+    int low_slider_position  = slider_rect.left + (get_w(slider_rect) - slider_thickness) * low_pos;
 
-    RECT high_pos_rect = get_rect(high_slider_position, slider_rect.top + thickness, slider_width, slider_height);
-    RECT low_pos_rect  = get_rect(low_slider_position,  slider_rect.top + thickness, slider_width, slider_height);
+    RECT high_pos_rect = get_rect(high_slider_position, slider_rect.top + thickness, slider_thickness, slider_height);
+    RECT low_pos_rect  = get_rect(low_slider_position,  slider_rect.top + thickness, slider_thickness, slider_height);
     
     bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !(left_button_down && handled_press_left);
     
@@ -2664,15 +2665,13 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
 
     Color high_slider_color = palette.button_color;
     Color low_slider_color  = palette.button_color;
-    if (!sliders.pressing_a_slider || slider_is_pressed(slider_order)) {
-        if (slider_is_pressed(slider_order, true)) {
-            high_slider_color = palette.highlight_button_color;
-        } else if (slider_is_pressed(slider_order, false)) {
-            low_slider_color = palette.highlight_button_color;
-        } else if (highlighted) {
-            if (high_is_closer) high_slider_color = palette.highlight_button_color;
-            else                low_slider_color  = palette.highlight_button_color;
-        }
+
+    if (slider_is_pressed(slider_order,  true)) high_slider_color = palette.highlight_button_color;
+    if (slider_is_pressed(slider_order, false)) low_slider_color  = palette.highlight_button_color;
+
+    if (!sliders.pressing_a_slider && highlighted) {
+        if (high_is_closer) high_slider_color = palette.highlight_button_color;
+        else                low_slider_color  = palette.highlight_button_color;
     }
 
     Color text_color = highlighted || slider_is_pressed(slider_order) ? palette.highlight_text_color : palette.text_color;

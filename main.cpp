@@ -217,8 +217,8 @@ const Color GRAY       = { 50,  50,  50, 255};
 const Color BLACK      = {  0,   0,   0, 255};
 const Color GREEN      = { 70, 200,  80, 255};
 const Color DARK_GREEN = { 50, 125,  60, 255};
-const Color BLUE       = { 56, 185, 245, 255};
-const Color DARK_BLUE  = {  5, 108, 156, 255};
+const Color BLUE       = { 70, 200, 255, 255};
+const Color DARK_BLUE  = { 20, 120, 170, 255};
 const Color ERROR_RED  = {201,  36,  24, 255};
 const Color WARNING    = {247, 194,  32, 255};
 
@@ -1059,10 +1059,10 @@ void compute_dimensions_from_x_grid(bitmap image) {
 
 void compute_dimensions_from_y_grid(bitmap image) {
     if (settings.y_grid <= 0) settings.y_grid = 1;
-    settings.width = (float) image.Width / (float) settings.y_grid;
+    settings.width = (float) image.Height / (float) settings.y_grid;
 
     if (settings.width <= 0) settings.width = 1;
-    settings.x_grid = (float) image.Height / (float) settings.width + 1;
+    settings.x_grid = (float) image.Width / (float) settings.width + 1;
 }
 
 void crop_image(bitmap *image, RECT_f displayed_crop_rectangle) {
@@ -1150,18 +1150,6 @@ void premultiply_alpha(bitmap *image) {
         uint8 R = ((Pixels[p] >> 16) & 0xff) * A_scaled;
         uint8 G = ((Pixels[p] >>  8) & 0xff) * A_scaled;
         uint8 B = ((Pixels[p] >>  0) & 0xff) * A_scaled;
-        
-        Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
-    }
-}
-
-void invert_alpha(bitmap *image) {
-    uint32 *Pixels = (uint32 *) image->Memory;
-    for (int p = 0; p < image->Width * image->Height; p++) {
-        uint8 A = 255 - ((Pixels[p] >> 24) & 0xff);
-        uint8 R = ((Pixels[p] >> 16) & 0xff);
-        uint8 G = ((Pixels[p] >>  8) & 0xff);
-        uint8 B = ((Pixels[p] >>  0) & 0xff);
         
         Pixels[p] = (A << 24) | (R << 16) | (G << 8) | (B << 0);
     }
@@ -2134,6 +2122,7 @@ int main(void) {
             int y_grid_press = settings_panel.push_updown_counter("Vertical", default_palette, UpDown_(settings.y_grid));
             settings.y_grid = MAX(1, settings.y_grid + y_grid_press);
             if (y_grid_press != 0) compute_dimensions_from_y_grid(image);
+
         } else if (settings.centers_style == Random && settings.centers_settings_visible) {
             settings_panel.row(1, 0.25);
             settings_panel.row();
@@ -2229,13 +2218,8 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Shuffle Centers", default_palette, &settings.shuffle_centers);
 
-            settings_panel.row(3);
-            settings_panel.add_text("Invert:", BLUE);
-            settings_panel.push_toggler("Size", default_palette, &settings.invert_size);
-            settings_panel.push_toggler("Alpha", default_palette, &settings.invert_alpha);
-
-            settings_panel.row(1, 0.25);
-            settings_panel.row(1);
+            settings_panel.row(2);
+            settings_panel.push_toggler("Invert Size", default_palette, &settings.invert_size);
             settings_panel.push_toggler("Random size", default_palette, &settings.random_size);
         }
 

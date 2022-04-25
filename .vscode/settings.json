@@ -128,6 +128,7 @@
                     "variable.parameter.preprocessor.cpp",
                     "meta.parens.cpp",
                     "meta.block.cpp",
+                    "meta.function.definition.cpp",
                 ],
                 "settings": {
                     "foreground": "#b0bfc6"

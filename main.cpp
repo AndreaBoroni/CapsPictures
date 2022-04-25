@@ -11,8 +11,6 @@ using namespace std;
     - Save with the correct number
 UI:
     - Better rendering in the window
-    - Fix zooming (mostly fix but not completely, it still shifts some)
-    - standardize options for caps vs. textures (in progress)
 */
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -243,8 +241,7 @@ RECT get_rect(int x, int y, int width, int height) {
     return {x, y, x + width, y + height};
 }
 
-void init_font(int sizes[])
-{
+void init_font(int sizes[]) {
     char ttf_buffer[1<<20];
     int temp;
 
@@ -333,8 +330,7 @@ void render_text(float number, int digits, int font_type, RECT dest_rect, Color 
     render_text(text, length, font_type, dest_rect, c);
 }
 
-void initialize_main_buffer()
-{
+void initialize_main_buffer() {
     Main_Buffer.Info = &Main_Info;
     Main_Buffer.Info->bmiHeader.biSize        = sizeof(Main_Buffer.Info->bmiHeader);
     Main_Buffer.Info->bmiHeader.biPlanes      = 1;
@@ -839,6 +835,7 @@ struct General_Settings {
     bool inverse_caps = false;
     bool by_color     = false;
     bool hard_max     = false;
+    bool compute_with_limits = false;
 
     // texture
     int adjusted_brightness = 50;
@@ -940,7 +937,7 @@ int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radiu
 }
 
 int *compute_indexes_by_color(bitmap image, v2 *centers, int number_of_centers, int radius, int adjusted_brightness, int adjusted_hue) {
-
+    
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
     assert(indexes);
 
@@ -1282,6 +1279,119 @@ v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
         if (settings.shuffle_centers && settings.centers_style != Random) shuffle(centers, *number_of_centers, 100);
     }
     return centers;
+}
+
+float *compute_table(bitmap image, v2 *centers, int number_of_centers, int radius, int adjusted_brightness, int adjusted_hue) {
+    
+    float *table = (float *) malloc(sizeof(float) * number_of_centers * Total_Caps);
+    assert(table);
+
+    // Todo: do on startup
+    Color caps_colors[Total_Caps];
+    for (int i = 0; i < Total_Caps; i++) {
+        caps_colors[i] = compute_color_average(caps_data[i], 0, 0, caps_data[i].Width);
+    }
+
+    for (int i = 0; i < number_of_centers; i++) {
+        Color c = compute_color_average(image, centers[i].x, centers[i].y, radius);
+        if (adjusted_hue != 0) c = shift_hue(c, adjusted_hue);
+
+        float b = (float) settings.adjusted_brightness / 50.0;
+        uint8 R = clamp((int) (c.R * b), 0, 255);
+        uint8 G = clamp((int) (c.G * b), 0, 255);
+        uint8 B = clamp((int) (c.B * b), 0, 255);
+
+        for (int j = 0; j < Total_Caps; j++) {
+            Color c = caps_colors[j];
+            float distance;
+            if (settings.hard_max) {
+                distance = MAX((c.R - R) * (c.R - R), (c.G - G) * (c.G - G));
+                distance = MAX((c.B - B) * (c.B - B), distance);
+                distance /= 255.0 * 255.0; // Normalize
+            } else {
+                distance = (c.R - R) * (c.R - R) + (c.G - G) * (c.G - G) + (c.B - B) * (c.B - B);
+                distance /= 3.0 * 255.0 * 255.0; // Normalize
+            }
+            table[i * Total_Caps + j] = distance;
+        }
+    }
+
+    return table;
+}
+
+int caps_count[Total_Caps] = {1,2,3,4,2,2,2,2,3,44,5,5,6,6,677,8,8,8,8,8};
+
+int find_min(float *distance_table, int *used_caps, int *paired_centers, int number_of_centers) {
+    int min_index = -1;
+    for (int i = 0; i < number_of_centers; i++) {
+        if (paired_centers[i] != 0) continue;
+        for (int j = 0; j < Total_Caps; j++) {
+            if (used_caps[j] >= caps_count[j]) continue;
+
+            if (min_index == -1) {
+                min_index = i * Total_Caps + j;
+            } else if (distance_table[min_index] > distance_table[i * Total_Caps + j]) {
+                min_index = i * Total_Caps + j;
+            }
+        }
+    }
+
+    return min_index;
+}
+
+bitmap create_image_caps_with_caps_limit(bitmap image) {
+    int number_of_centers, radius;
+    v2 *centers = get_centers(image, &number_of_centers, &radius);
+
+    int total_owned_caps = 0;
+    for (int i = 0; i < Total_Caps; i++) total_owned_caps += caps_count[i];
+    if (number_of_centers > total_owned_caps) {
+        return (bitmap) {0};
+    }
+    
+    float *distance_table = compute_table(image, centers, number_of_centers, radius, settings.adjusted_brightness, settings.adjusted_hue);
+
+    int used_caps[Total_Caps] = {0};
+    int paired_centers[number_of_centers] = {0};
+
+    for (int i = 0; i < number_of_centers; i++) {
+        int min_index = find_min(distance_table, used_caps, paired_centers, number_of_centers);
+
+        int cap = min_index % Total_Caps;
+        used_caps[cap]++;
+        
+        int center = min_index / Total_Caps;
+        paired_centers[center] = cap + 1; // + 1 is a hack for now
+    }
+
+    for (int i = 0; i < number_of_centers; i++) {
+        centers[i].x *= settings.scale;
+        centers[i].y *= settings.scale;
+    }
+    
+    bitmap result_bitmap;
+    result_bitmap.Width  = image.Width  * settings.scale;
+    result_bitmap.Height = image.Height * settings.scale;
+    result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+
+    for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+    }
+
+    int dim = 2 * radius * settings.scale;
+    for (int i = 0; i < number_of_centers; i++) {
+        blit_bitmap_to_bitmap(&result_bitmap, &caps_data[paired_centers[i] - 1], centers[i].x - dim / 2, centers[i].y - dim / 2, dim, dim);
+    }
+    memcpy(result_bitmap.Original, result_bitmap.Memory, result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    
+    free(centers);
+    free(distance_table);
+
+    return result_bitmap;
 }
 
 bitmap create_image_caps(bitmap image) {
@@ -1915,14 +2025,11 @@ int main(void) {
         RECT p_rect = result_panel.get_current_rect();
         RECT render_processed_rect = {p_rect.left + border*2, p_rect.top + border*2, p_rect.right - border*2, p_rect.bottom - border*2};
 
-        int processed_button_result;
-        if (result_bitmap.Memory) {
-             processed_button_result = result_panel.push_button("", default_palette, border);
-        } else {
-            processed_button_result = result_panel.push_button("Process image", default_palette, border);
-        }
-        result_panel.font_size = Small_Font;  
+        char process_text[] = "Process image";
+        if (result_bitmap.Memory) process_text[0] = '\0';
+        int processed_button_result = result_panel.push_button(process_text, default_palette, border);
 
+        result_panel.font_size = Small_Font;  
         result_panel.row(1, 0.5);
         result_panel.row();
         bool r_change = result_panel.push_slider("Brightness", slider_palette, &settings.result_brightness, 1, 99, new_slider());
@@ -1992,7 +2099,11 @@ int main(void) {
                 free(result_bitmap.Original);
 
                 if (settings.caps_or_texture == Caps_Style) {
-                    result_bitmap = create_image_caps(image);
+                    if (settings.compute_with_limits) {
+                        result_bitmap = create_image_caps_with_caps_limit(image);
+                    } else {
+                        result_bitmap = create_image_caps(image);
+                    }
                 } else {
                     assert(settings.caps_or_texture == Texture_Style);
                     result_bitmap = create_image_texture(image);
@@ -2158,6 +2269,9 @@ int main(void) {
             if (settings.by_color) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
+
+            settings_panel.row();
+            settings_panel.push_toggler("Compute with limits", default_palette, &settings.compute_with_limits);
 
         } else if (settings.caps_or_texture == Texture_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);

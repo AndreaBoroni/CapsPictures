@@ -681,9 +681,10 @@ void render_bitmap_to_screen(bitmap *Source, RECT dest_rect, RECT source_rect) {
 
 }
 
-#define SQRT_2 1.4142
+#define SQRT_2 1.41421356237
+#define SQRT_3 1.73205080757
 void compute_centers_hex(v2 *centers, int x_caps, int y_caps, int radius) {
-    int delta_vertical   = (SQRT_2 * radius) + 0.5;
+    int delta_vertical   = (SQRT_3 * radius) + 0.5;
     int delta_horizontal = 2 * radius;
 
     int current_y = radius;
@@ -1977,7 +1978,6 @@ void load_and_initialize_caps_owned() {
                 // We do a '- 1' because the name of the caps in the .pngs start
                 // at 1 and the array starts at 0.
                 caps_count[cap_number - 1] = number_of_caps_owned;
-                printf("Cap: %d is %d\n", cap_number, number_of_caps_owned);
             } break;
         }
 

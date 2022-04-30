@@ -1,7 +1,7 @@
 # Lines that start with '#' are comments
 
 # This is how to writw down the owned number of caps:
-# [cap_number: number_of_caps_owned
+# >cap_number: number_of_caps_owned
 
 >51: 104
 >7: 297

@@ -1,0 +1,19 @@
+# Lines that start with '#' are comments
+
+# This is how to writw down the owned number of caps:
+# [cap_number: number_of_caps_owned
+
+>51: 104
+>7: 297
+>79: 64
+>86: 149
+>13: 96
+>22: 30
+>34: 329
+>94: 128
+>108: 39
+>103: 14
+>101: 14
+>110: 14
+>80: 14
+>112: 21

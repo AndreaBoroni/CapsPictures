@@ -165,9 +165,9 @@ Color_hsv rgb_to_hsv(Color c) {
         return result;
     }
 
-    if      (c.R == max) result.h =     (float) (c.G - c.B) / (float) delta;
-    else if (c.G == max) result.h = 2 + (float) (c.B - c.R) / (float) delta;
-    else                 result.h = 4 + (float) (c.R - c.G) / (float) delta;
+    if      (c.R == max) result.h = (float) (c.G - c.B) / (float) delta;
+    else if (c.G == max) result.h = (float) (c.B - c.R) / (float) delta + 2;
+    else                 result.h = (float) (c.R - c.G) / (float) delta + 4;
 
     result.h *= 60;
     if (result.h < 0) result.h += 360;
@@ -1319,7 +1319,7 @@ float *compute_table(bitmap image, v2 *centers, int number_of_centers, int radiu
     return table;
 }
 
-int caps_count[Total_Caps] = {1,2,3,4,2,2,2,2,3,44,5,5,6,6,677,8,8,8,8,8};
+int caps_count[Total_Caps] = {0};
 
 int find_min(float *distance_table, int *used_caps, int *paired_centers, int number_of_centers) {
     int min_index = -1;
@@ -1346,6 +1346,7 @@ bitmap create_image_caps_with_caps_limit(bitmap image) {
     int total_owned_caps = 0;
     for (int i = 0; i < Total_Caps; i++) total_owned_caps += caps_count[i];
     if (number_of_centers > total_owned_caps) {
+        printf("You don't have enough caps for this. Counted %d, but the picture requires %d\n", total_owned_caps, number_of_centers);
         return (bitmap) {0};
     }
     
@@ -1375,11 +1376,15 @@ bitmap create_image_caps_with_caps_limit(bitmap image) {
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
 
-    for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
-        result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
-        result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
-        result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
-        result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+    if (!settings.use_original_as_background) {
+        for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
+            result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
+            result_bitmap.Memory[i*4 + 1] = settings.bg_color.G;
+            result_bitmap.Memory[i*4 + 2] = settings.bg_color.R;
+            result_bitmap.Memory[i*4 + 3] = settings.bg_color.A;
+        }
+    } else {
+        blit_bitmap_to_bitmap(&result_bitmap, &image, 0, 0, result_bitmap.Width, result_bitmap.Height);
     }
 
     int dim = 2 * radius * settings.scale;
@@ -1898,9 +1903,93 @@ void load_settings() {
     free(settings_data);
 }
 
+void eat_line(char *data, unsigned int size, unsigned int *at) {
+    while (true) {
+        if (*at >= size) return;
+        if (data[*at] == '\n') {
+            *at = *at + 1;
+            return;
+        }
+        *at = *at + 1;
+    }
+}
+
+void eat_whitespace(char *data, unsigned int size, unsigned int *at) {
+    while (true) {
+        if (*at >= size) return;
+
+        if (data[*at] != '\n' && data[*at] != '\r' &&
+            data[*at] != '\t' && data[*at] != '\v' &&
+            data[*at] != '\f' &&data[*at] != ' ') return;
+
+        *at = *at + 1;
+    }
+}
+
+int maybe_parse_int(char *data, unsigned int size, unsigned int *at) {
+    eat_whitespace(data, size, at);
+
+    int number = 0;
+    while (true) {
+        if (data[*at] < '0') return number;
+        if (data[*at] > '9') return number;
+        
+        int digit = data[*at] - '0';
+        number = number * 10 + digit;
+
+        *at = *at + 1;
+    }
+}
+
+void load_and_initialize_caps_owned() {
+    unsigned int size;
+    auto data = load_file_memory("Caps\\Owned_Caps.txt", &size);
+    if (data == NULL) return;
+
+    unsigned int at = 0;
+    while (true) {
+        if (at >= size) return;
+
+        switch (data[at]) {
+            case '#': eat_line(data, size, &at); break;
+            case '>': {
+                at++;
+                int cap_number = maybe_parse_int(data, size, &at);
+                if (cap_number < 0 || cap_number >= Total_Caps) {
+                    // When we fail parsing anything on this line, we just
+                    // eat the full line and continue with the rest of the file.
+                    eat_line(data, size, &at);
+                    break;
+                }
+                
+                if (at >= size) return; // Check 'at' before poking into memory
+                if (data[at++] != ':') {
+                    eat_line(data, size, &at);
+                    break;
+                }
+
+                int number_of_caps_owned = maybe_parse_int(data, size, &at);
+                if (number_of_caps_owned < 0) {
+                    eat_line(data, size, &at);
+                    break;
+                }
+
+                // We do a '- 1' because the name of the caps in the .pngs start
+                // at 1 and the array starts at 0.
+                caps_count[cap_number - 1] = number_of_caps_owned;
+                printf("Cap: %d is %d\n", cap_number, number_of_caps_owned);
+            } break;
+        }
+
+        // We eat all the spaces and black lines to make it more robust and easier to read
+        eat_whitespace(data, size, &at);
+    }
+}
+
 int main(void) {
     initialize_main_buffer();
     start_main_window();
+    load_and_initialize_caps_owned();
 
     int CPM = get_CPM();
     ms t0, t1;
@@ -2224,7 +2313,7 @@ int main(void) {
             settings_panel.row();
             int by_press;
             switch (settings.render_centers_by) {
-                case Randomly: by_press = settings_panel.push_selector("Randomly", default_palette);      break;
+                case Randomly:   by_press = settings_panel.push_selector("Randomly", default_palette);      break;
                 case Brightness: by_press = settings_panel.push_selector("By Brightness", default_palette); break;
                 case Darkness:   by_press = settings_panel.push_selector("By Darkness", default_palette);   break;
             }
@@ -2264,14 +2353,17 @@ int main(void) {
             settings_panel.row();
             settings_panel.push_toggler("Invert", default_palette, &settings.inverse_caps);
             
+            settings_panel.row();
+            settings_panel.push_toggler("Compute with limits", default_palette, &settings.compute_with_limits);
+
             settings_panel.row(2);
             settings_panel.push_toggler("By Color", default_palette, &settings.by_color);
+            
+            if (settings.compute_with_limits) settings.by_color = true;
             if (settings.by_color) {
                 settings_panel.push_toggler("Hard Max", default_palette, &settings.hard_max);
             }
 
-            settings_panel.row();
-            settings_panel.push_toggler("Compute with limits", default_palette, &settings.compute_with_limits);
 
         } else if (settings.caps_or_texture == Texture_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);

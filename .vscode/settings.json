@@ -129,6 +129,7 @@
                     "meta.parens.cpp",
                     "meta.block.cpp",
                     "meta.function.definition.cpp",
+                    "meta.body.struct.cpp",
                 ],
                 "settings": {
                     "foreground": "#b0bfc6"

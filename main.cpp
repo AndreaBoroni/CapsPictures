@@ -87,8 +87,8 @@ BITMAPINFO Main_Info   = {0};
 
 HWND Window = {0};
 
-bool left_button_down    = false;
-bool right_button_down   = false;
+bool left_button_down  = false;
+bool right_button_down = false;
 
 int mousewheel_counter = 0;
 v2  mouse_position     = {0, 0};
@@ -786,6 +786,12 @@ enum Size_Settings {
     Size_Settings_Count,
 };
 
+enum Show_Settings {
+    Show_Background_Settings,
+    Show_Save_Settings,
+    Show_Gif_Settings,
+};
+
 #define Caps_Style    0
 #define Texture_Style 1
 
@@ -803,6 +809,9 @@ struct General_Settings {
     float scale = 1.0;
 
     bool lock_zoom = true;
+
+    int show_settings = Show_Save_Settings;
+    int show_settings_visible = true;
 
     int texture_selected = 0;
 
@@ -1068,9 +1077,11 @@ void crop_image(bitmap *image, RECT_f displayed_crop_rectangle) {
 }
 
 void adjust_bpp(bitmap *image, int Bpp) {
-    if (Bpp == 4) return;
     
-    if (Bpp == 3) {
+    if (image->Memory == NULL) return;
+
+    if (Bpp == 4) return;
+    else if (Bpp == 3) {
         uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Bytes      = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
@@ -1078,10 +1089,8 @@ void adjust_bpp(bitmap *image, int Bpp) {
         }
         free(image->Memory);
         image->Memory = (uint8 *) new_memory;
-        return;
-    }
-    
-    if (Bpp == 1) {
+        
+    } else if (Bpp == 1) {
         uint32 *new_memory = (uint32 *) malloc(image->Width * image->Height * Bytes_Per_Pixel);
         uint8  *Pixels     = (uint8 *)  image->Memory;
         for (int p = 0; p < image->Width * image->Height; p++) {
@@ -1089,9 +1098,10 @@ void adjust_bpp(bitmap *image, int Bpp) {
         }
         free(image->Memory);
         image->Memory = (uint8 *) new_memory;
-        return;
+        
+    } else {
+        printf("ERROR: wrong bytes_per_pixel passed to 'adjust_bpp' function.\n");
     }
-    assert(false);
 }
 
 void swap_red_and_blue_channels(bitmap *image) {
@@ -1355,6 +1365,7 @@ bitmap create_image_caps_with_caps_limit(bitmap image) {
     for (int i = 0; i < Total_Caps; i++) total_owned_caps += caps_count[i];
     if (number_of_centers > total_owned_caps) {
         printf("You don't have enough caps for this. Counted %d, but the picture requires %d\n", total_owned_caps, number_of_centers);
+        free(centers);
         return (bitmap) {0};
     }
     
@@ -1383,8 +1394,11 @@ bitmap create_image_caps_with_caps_limit(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-    if (result_bitmap.Memory   == NULL) return result_bitmap;
-    if (result_bitmap.Original == NULL) return result_bitmap;
+    if (result_bitmap.Memory == NULL || result_bitmap.Original == NULL) {
+        free(centers);
+        free(distance_table);
+        return result_bitmap;
+    }
 
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
@@ -1434,8 +1448,11 @@ bitmap create_image_caps(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-    if (result_bitmap.Memory   == NULL) return result_bitmap;
-    if (result_bitmap.Original == NULL) return result_bitmap;
+    if (result_bitmap.Memory == NULL || result_bitmap.Original == NULL) {
+        free(centers);
+        free(indexes);
+        return result_bitmap;
+    }
 
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
@@ -1504,8 +1521,12 @@ bitmap create_image_texture(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-    if (result_bitmap.Memory   == NULL) return result_bitmap;
-    if (result_bitmap.Original == NULL) return result_bitmap;
+    if (result_bitmap.Memory == NULL || result_bitmap.Original == NULL) {
+        free(colors);
+        free(centers);
+        free(brightnesses);
+        return result_bitmap;
+    }
     
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
@@ -1549,6 +1570,7 @@ bitmap create_image_texture(bitmap image) {
 
     free(centers);
     free(colors);
+    free(brightnesses);
 
     return result_bitmap;
 }
@@ -1639,10 +1661,15 @@ struct Panel {
     int at_x = 0;
     int at_y = 0;
 
+    int current_row    = 0;
+    int current_column = 0;
+    int columns_this_row = 0;
+
+    bool adaptive_row = false;
+
     int font_size = Small_Font;
 
-    void row(int columns = 1, float height_factor = 1);
-    void current_row(int columns = 1, float height_factor = 1);
+    void row(int columns = 1, float height_factor = 1, bool adaptive = false);
     void indent(float indent_percentage = 0.1);
     RECT get_current_rect();
 
@@ -1673,8 +1700,8 @@ Panel make_panel(int x, int y, int height, int width, int font_size) {
     result.base_width  = width;
     result.base_height = height;
 
-    result.row_height   = height;
-    result.column_width = width;
+    result.row_height   = 0;
+    result.column_width = 0;
 
     result.font_size = font_size;
     return result;
@@ -1911,8 +1938,8 @@ void load_settings() {
 
     unsigned int file_size;
     char *settings_data = load_file_memory(file_name, &file_size);
-
     if (settings_data == NULL) return;
+
     if (file_size != sizeof(General_Settings)) {
         free(settings_data);
         return;
@@ -2002,6 +2029,8 @@ void load_and_initialize_caps_owned() {
         // We eat all the spaces and black lines to make it more robust and easier to read
         eat_whitespace(data, size, &at);
     }
+
+    free(data);
 }
 
 int main(void) {
@@ -2090,7 +2119,7 @@ int main(void) {
         int border = 5;
         // Source Image Panel
         Panel source_panel = make_panel(source_left, main_border, 40, display_width, Medium_Font);
-        source_panel.current_row(1, display_rows);
+        source_panel.row(1, display_rows);
 
         RECT s_rect = source_panel.get_current_rect();
         RECT render_source_rect = {s_rect.left + border*2, s_rect.top + border*2, s_rect.right - border*2, s_rect.bottom - border*2};
@@ -2127,7 +2156,7 @@ int main(void) {
 
         // Processed Image Panel
         Panel result_panel = make_panel(processed_left, main_border, 40, display_width, Medium_Font);
-        result_panel.current_row(1, display_rows);
+        result_panel.row(1, display_rows);
 
         RECT p_rect = result_panel.get_current_rect();
         RECT render_processed_rect = {p_rect.left + border*2, p_rect.top + border*2, p_rect.right - border*2, p_rect.bottom - border*2};
@@ -2151,6 +2180,12 @@ int main(void) {
         result_panel.row(2);
         if (result_panel.push_button("Swap R & B", default_palette, 2) == Button_Left_Clicked) {
             if (result_bitmap.Memory) swap_red_and_blue_channels(&result_bitmap);
+        }
+        
+        bool zoom_pressed = result_panel.push_toggler("Lock Zoom", default_palette, &settings.lock_zoom);
+        if (zoom_pressed && settings.lock_zoom) {
+            if (result_bitmap.Memory) processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
+            if (image.Memory)         source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
         }
 
         if (changed_size) {
@@ -2266,8 +2301,11 @@ int main(void) {
 
         // Settings Panel
         Panel settings_panel = make_panel(settings_left, main_border, 30, settings_width, Small_Font);
-        settings_panel.current_row(1, 1.5);
+        settings_panel.row(2, 1.5, true);
         settings_panel.add_text("Settings", BLUE, Medium_Font);
+        if (settings_panel.push_button("Load", default_palette) == Button_Left_Clicked) {
+            load_settings();
+        }
 
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
@@ -2275,7 +2313,7 @@ int main(void) {
         centers_header_pushed |= settings_panel.push_header("Grid", header_palette, Grid,      &settings.centers_style);
         centers_header_pushed |= settings_panel.push_header("Hex",  header_palette, Hexagonal, &settings.centers_style);
         centers_header_pushed |= settings_panel.push_header("Rnd",  header_palette, Random,    &settings.centers_style);
-        if (centers_header_pushed) settings.centers_settings_visible = !settings.centers_settings_visible;
+        settings.centers_settings_visible = (settings.centers_settings_visible != centers_header_pushed);
 
         if (settings.centers_style == Hexagonal && settings.centers_settings_visible) {
             settings_panel.row(1, 0.25);
@@ -2365,7 +2403,7 @@ int main(void) {
         bool style_header_pushed = false;
         style_header_pushed |= settings_panel.push_header("Caps",    header_palette, Caps_Style,    &settings.caps_or_texture);
         style_header_pushed |= settings_panel.push_header("Texture", header_palette, Texture_Style, &settings.caps_or_texture);
-        if (style_header_pushed) settings.style_settings_visible = !settings.style_settings_visible;
+        settings.style_settings_visible = (settings.style_settings_visible != style_header_pushed);
 
         if (settings.caps_or_texture == Caps_Style && settings.style_settings_visible) {
             settings_panel.row(1, 0.25);
@@ -2421,42 +2459,84 @@ int main(void) {
             if (settings.size_style == -1)                  settings.size_style = Size_Settings_Count - 1;
             if (settings.size_style == Size_Settings_Count) settings.size_style = 0;
         }
-        
-        settings_panel.row(1, 0.25);
-        settings_panel.row(1, 2);
-        if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
-            load_settings();
-        }
 
         settings_panel.row(1, 0.5);
-        settings_panel.row(1, 1.5);
-        int gif_press = settings_panel.push_button("Make GIF", default_palette, 3);
-        if (gif_press == Button_Left_Clicked) {
+        settings_panel.row(3, 1, true);
+        
+        int selected_old = settings.show_settings;
+        bool settings_header_pushed = false;
+        settings_header_pushed |= settings_panel.push_header("Save",       header_palette, Show_Save_Settings,       &settings.show_settings);
+        settings_header_pushed |= settings_panel.push_header("Gif",        header_palette, Show_Gif_Settings,        &settings.show_settings);
+        settings_header_pushed |= settings_panel.push_header("Background", header_palette, Show_Background_Settings, &settings.show_settings);
+        settings.show_settings_visible = (settings.show_settings_visible != settings_header_pushed);
+        if (selected_old != settings.show_settings) settings.show_settings_visible = true;
 
-            int dot_index = get_last_index(file_name, '.');
-            assert(dot_index >= 0);
+        settings_panel.row(1, 0.5);
+        if (settings.show_settings == Show_Save_Settings && settings.show_settings_visible) {
+            settings_panel.row(1, 2);
+            Color_Palette palette = saved_changes ? no_save_palette : save_palette;
+            int save_click_result = settings_panel.push_button("Save", palette, 3);
+            if (save_click_result == Button_Left_Clicked && result_bitmap.Memory) {
+                int dot_index = get_last_index(file_name, '.');
+                assert(dot_index >= 0);
 
-            char save_file_name[file_name_size + 3];
-            strncpy(save_file_name, file_name, dot_index);
+                char save_file_name[file_name_size + 3];
+                strncpy(save_file_name, file_name, dot_index);
 
-            save_file_name[dot_index] = '\0';
-            strcat(save_file_name, to_string(save_counter).c_str());
-            strcat(save_file_name, ".gif");
+                bool success = false;
 
-            free(result_bitmap.Memory);
-            free(result_bitmap.Original);
+                swap_red_and_blue_channels(&result_bitmap);
+                if (settings.save_as_png) {
+                    save_file_name[dot_index] = '\0';
+                    strcat(save_file_name, to_string(save_counter).c_str());
+                    strcat(save_file_name, ".png");
+                    int pitch = Bytes_Per_Pixel * result_bitmap.Width;
+                    success |= stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, pitch);
+                }
+                
+                if (settings.save_as_bmp) {
+                    save_file_name[dot_index] = '\0';
+                    strcat(save_file_name, to_string(save_counter).c_str());
+                    strcat(save_file_name, ".bmp");
+                    success |= stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
+                }
 
-            if (settings.caps_or_texture == Caps_Style) {
-                result_bitmap = create_image_caps(image);
-            } else {
-                assert(settings.caps_or_texture == Texture_Style);
-                result_bitmap = create_image_texture(image);
+                if (settings.save_as_jpg) {
+                    save_file_name[dot_index] = '\0';
+                    strcat(save_file_name, to_string(save_counter).c_str());
+                    strcat(save_file_name, ".jpg");
+                    success |= stbi_write_jpg(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, 100);
+                }
+                swap_red_and_blue_channels(&result_bitmap);
+
+                if (success) {
+                    save_counter++;
+                    saved_changes = true;
+                }
             }
 
-            GifWriter writer = {};
-            GifBegin(&writer, save_file_name, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+            settings_panel.row(1, 0.25);
+            settings_panel.row(3);
+            settings_panel.push_toggler("png", default_palette, &settings.save_as_png);
+            settings_panel.push_toggler("bmp", default_palette, &settings.save_as_bmp);
+            settings_panel.push_toggler("jpg", default_palette, &settings.save_as_jpg);
 
-            for (int i = 0; i < 16; i++) {
+        } else if (settings.show_settings == Show_Gif_Settings && settings.show_settings_visible) {
+            settings_panel.row(1, 2);
+            int gif_press = settings_panel.push_button("Make GIF", default_palette, 3);
+
+            if (gif_press == Button_Left_Clicked && image.Memory) {
+
+                int dot_index = get_last_index(file_name, '.');
+                assert(dot_index >= 0);
+
+                char save_file_name[file_name_size + 3];
+                strncpy(save_file_name, file_name, dot_index);
+
+                save_file_name[dot_index] = '\0';
+                strcat(save_file_name, to_string(save_counter).c_str());
+                strcat(save_file_name, ".gif");
+
                 free(result_bitmap.Memory);
                 free(result_bitmap.Original);
 
@@ -2466,99 +2546,57 @@ int main(void) {
                     assert(settings.caps_or_texture == Texture_Style);
                     result_bitmap = create_image_texture(image);
                 }
+
+                GifWriter writer = {};
+                GifBegin(&writer, save_file_name, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+
+                for (int i = 0; i < 16; i++) {
+                    free(result_bitmap.Memory);
+                    free(result_bitmap.Original);
+
+                    if (settings.caps_or_texture == Caps_Style) {
+                        result_bitmap = create_image_caps(image);
+                    } else {
+                        assert(settings.caps_or_texture == Texture_Style);
+                        result_bitmap = create_image_texture(image);
+                    }
+                    swap_red_and_blue_channels(&result_bitmap);
+                    GifWriteFrame(&writer, result_bitmap.Memory, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+                }
                 swap_red_and_blue_channels(&result_bitmap);
-                GifWriteFrame(&writer, result_bitmap.Memory, result_bitmap.Width, result_bitmap.Height, 20, 8, true);
+
+                GifEnd(&writer);
             }
-            swap_red_and_blue_channels(&result_bitmap);
+        } else if (settings.show_settings == Show_Background_Settings && settings.show_settings_visible) {
+            settings_panel.row(2, 1, true);
+            settings_panel.push_toggler("Background", default_palette, &color_picker_active, &settings.bg_color);
+            settings_panel.push_toggler("Original", default_palette, &settings.use_original_as_background);
 
-            GifEnd(&writer);
-        }
+            if (color_picker_active) {
+                settings_panel.row(1, 0.1);            
+                settings_panel.row();            
+                RECT at_rect = settings_panel.get_current_rect();
+                RECT color_picker_rect = {at_rect.left, at_rect.top, at_rect.right, at_rect.top + 170};
+                render_filled_rectangle(color_picker_rect, BLACK);
+                render_rectangle(color_picker_rect, WHITE, 5);
 
-        settings_panel.row(1, 0.5);
-        settings_panel.row(1, 2);
-        Color_Palette palette = saved_changes ? no_save_palette : save_palette;
-        int save_click_result = settings_panel.push_button("Save", palette, 3);
-        if (save_click_result == Button_Left_Clicked && result_bitmap.Memory) {
-            int dot_index = get_last_index(file_name, '.');
-            assert(dot_index >= 0);
+                Panel color_picker = make_panel(color_picker_rect.left + 10, color_picker_rect.top, 30, settings_width - 20, Small_Font);
+                color_picker.row(1, 0.2);
 
-            char save_file_name[file_name_size + 3];
-            strncpy(save_file_name, file_name, dot_index);
+                color_picker.row(1, 0.1);
+                color_picker.row();
+                color_picker.push_slider("R", slider_palette, &settings.bg_color.R, 0, 255, new_slider());
+                color_picker.row();
+                color_picker.push_slider("G", slider_palette, &settings.bg_color.G, 0, 255, new_slider());
+                color_picker.row();
+                color_picker.push_slider("B", slider_palette, &settings.bg_color.B, 0, 255, new_slider());
+                color_picker.row();
+                color_picker.push_slider("A", slider_palette, &settings.bg_color.A, 0, 255, new_slider());
 
-            bool success = false;
-
-            swap_red_and_blue_channels(&result_bitmap);
-            if (settings.save_as_png) {
-                save_file_name[dot_index] = '\0';
-                strcat(save_file_name, to_string(save_counter).c_str());
-                strcat(save_file_name, ".png");
-                int pitch = Bytes_Per_Pixel * result_bitmap.Width;
-                success |= stbi_write_png(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, pitch);
+                color_picker.row(2);
+                if (color_picker.push_button("Reset", default_palette) == Button_Left_Clicked) settings.bg_color   = BLACK;
+                if (color_picker.push_button("Done",  default_palette) == Button_Left_Clicked) color_picker_active = false;
             }
-            
-            if (settings.save_as_bmp) {
-                save_file_name[dot_index] = '\0';
-                strcat(save_file_name, to_string(save_counter).c_str());
-                strcat(save_file_name, ".bmp");
-                success |= stbi_write_bmp(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory);
-            }
-
-            if (settings.save_as_jpg) {
-                save_file_name[dot_index] = '\0';
-                strcat(save_file_name, to_string(save_counter).c_str());
-                strcat(save_file_name, ".jpg");
-                success |= stbi_write_jpg(save_file_name, result_bitmap.Width, result_bitmap.Height, Bytes_Per_Pixel, result_bitmap.Memory, 100);
-            }
-            swap_red_and_blue_channels(&result_bitmap);
-
-            if (success) {
-                save_counter++;
-                saved_changes = true;
-            }
-        }
-
-        
-        settings_panel.row(1, 0.25);
-        settings_panel.row(3);
-        settings_panel.push_toggler("png", default_palette, &settings.save_as_png);
-        settings_panel.push_toggler("bmp", default_palette, &settings.save_as_bmp);
-        settings_panel.push_toggler("jpg", default_palette, &settings.save_as_jpg);
-
-        settings_panel.row();
-        bool zoom_pressed = settings_panel.push_toggler("Lock Zoom", default_palette, &settings.lock_zoom);
-        if (zoom_pressed && settings.lock_zoom) {
-            if (result_bitmap.Memory) processed_zoom_rectangle = reset_zoom_rectangle(result_bitmap, render_processed_rect);
-            if (image.Memory)         source_zoom_rectangle    = reset_zoom_rectangle(image,         render_source_rect);
-        }
-
-        settings_panel.row(2);
-        settings_panel.push_toggler("Background", default_palette, &color_picker_active, &settings.bg_color);
-        settings_panel.push_toggler("Original", default_palette, &settings.use_original_as_background);
-
-        if (color_picker_active) {
-            settings_panel.row(1, 0.1);            
-            settings_panel.row();            
-            RECT at_rect = settings_panel.get_current_rect();
-            RECT color_picker_rect = {at_rect.left, at_rect.top, at_rect.right, at_rect.top + 170};
-            render_filled_rectangle(color_picker_rect, BLACK);
-            render_rectangle(color_picker_rect, WHITE, 5);
-
-            Panel color_picker = make_panel(color_picker_rect.left + 10, color_picker_rect.top, 30, settings_width - 20, Small_Font);
-            color_picker.current_row(1, 0.2);
-
-            color_picker.row(1, 0.1);
-            color_picker.row();
-            color_picker.push_slider("R", slider_palette, &settings.bg_color.R, 0, 255, new_slider());
-            color_picker.row();
-            color_picker.push_slider("G", slider_palette, &settings.bg_color.G, 0, 255, new_slider());
-            color_picker.row();
-            color_picker.push_slider("B", slider_palette, &settings.bg_color.B, 0, 255, new_slider());
-            color_picker.row();
-            color_picker.push_slider("A", slider_palette, &settings.bg_color.A, 0, 255, new_slider());
-
-            color_picker.row(2);
-            if (color_picker.push_button("Reset", default_palette) == Button_Left_Clicked) settings.bg_color   = BLACK;
-            if (color_picker.push_button("Done",  default_palette) == Button_Left_Clicked) color_picker_active = false;
         }
 
         handled_press_left  = true;
@@ -2572,18 +2610,20 @@ int main(void) {
     }
 }
 
-void Panel::row(int columns, float height_factor) {
+void Panel::row(int columns, float height_factor, bool adaptive) {
+    if (columns < 1) columns = 1;
+
+    current_row++;
+    current_column = 1;
+    columns_this_row = columns;
+
     // First you advance the at_y with the previous row_height
     at_y += row_height;
     at_x  = left_x;
 
     row_height   = base_height * height_factor;
     column_width = base_width / columns;
-}
-
-void Panel::current_row(int columns, float height_factor) {
-    row_height   = base_height * height_factor;
-    column_width = base_width / columns;
+    adaptive_row = adaptive;
 }
 
 void Panel::indent(float indent_percentage) {
@@ -2595,6 +2635,10 @@ RECT Panel::get_current_rect() {
     return get_rect(at_x, at_y, column_width, row_height);
 }
 
+int get_width(int text_length, int font_size) {
+    return text_length * (Font.advance * Font.scale[font_size]);
+}
+
 bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled, Color *override_color) {
     int thickness   = 2;
     int rect_side   = row_height - 2 * thickness;
@@ -2604,8 +2648,16 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled, Color
     RECT inside_rect = get_rect(at_x + thickness * 3, at_y + thickness * 3, inside_side, inside_side);
 
     int name_length = strlen(name);
-    int name_width  = MIN((name_length + 2) * (Font.advance * Font.scale[font_size]), column_width - rect_side);
-    RECT name_rect  = get_rect(at_x + rect_side, at_y, name_width, row_height);
+    int name_width  = column_width - rect_side;
+    if (adaptive_row) {
+         if (current_column == columns_this_row) {
+             name_width = left_x + base_width - at_x - rect_side;
+             if (name_width < 0) name_width = 0;
+         } else {
+             name_width = get_width(name_length + 2, font_size);
+         }
+    }
+    RECT name_rect = get_rect(at_x + rect_side, at_y, name_width, row_height);
 
     bool hovering = v2_inside_rect(mouse_position, button_rect) || v2_inside_rect(mouse_position, name_rect);
     bool highlighted = hovering && !sliders.pressing_a_slider;
@@ -2618,7 +2670,9 @@ bool Panel::push_toggler(char *name, Color_Palette palette, bool *toggled, Color
     else if (*toggled)  render_filled_rectangle(inside_rect, button_color);
     render_text(name, name_length, font_size, name_rect, text_color);
 
-    at_x += column_width;
+    int toggler_width = rect_side + name_width;
+    at_x += toggler_width;
+    current_column++;
 
     if (highlighted && left_button_down && !handled_press_left) {
         *toggled = !(*toggled);
@@ -2657,6 +2711,7 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
     else          render_text(*(int *)  value,    font_size, value_rect, value_color);
 
     at_x += column_width;
+    current_column++;
 
     if (left_button_down && !handled_press_left) {
         if (v2_inside_rect(mouse_position, minus_rect)) return -1;
@@ -2674,14 +2729,37 @@ int Panel::push_updown_counter(char *name, Color_Palette palette, void *value, b
 void Panel::add_text(char *text, Color c, int override_font_size) {
     int text_font_size = override_font_size != -1 ? override_font_size : font_size;
     
-    RECT draw_rect = get_current_rect();
-    render_text(text, strlen(text), text_font_size, draw_rect, c);
+    int text_length = strlen(text);
+    int text_width = column_width;
+    if (adaptive_row) {
+         if (current_column == columns_this_row) {
+             text_width = left_x + base_width - at_x;
+             if (text_width < 0) text_width = 0;
+         } else {
+             text_width = get_width(text_length + 2, text_font_size);
+         }
+    }
+    RECT text_rect = get_rect(at_x, at_y, text_width, row_height);
+    render_text(text, text_length, text_font_size, text_rect, c);
 
-    at_x += column_width;
+    at_x += text_width;
+    current_column++;
 }
 
 bool Panel::push_header(char *text, Color_Palette palette, int header, int *current_header) {
-    RECT text_rect = get_current_rect();
+
+    int text_length = strlen(text);
+    int text_width = column_width;
+    if (adaptive_row) {
+         if (current_column == columns_this_row) {
+             text_width = left_x + base_width - at_x;
+             if (text_width < 0) text_width = 0;
+         } else {
+             text_width = get_width(text_length + 2, font_size);
+         }
+    }
+
+    RECT text_rect = get_rect(at_x, at_y, text_width, row_height);
     bool highlighted = v2_inside_rect(mouse_position, text_rect) && !sliders.pressing_a_slider;
 
     Color text_color = palette.text_color;
@@ -2697,7 +2775,8 @@ bool Panel::push_header(char *text, Color_Palette palette, int header, int *curr
     render_filled_rectangle(text_rect, background_color);
     render_text(text, strlen(text), font_size, text_rect, text_color);
 
-    at_x += column_width;
+    at_x += text_width;
+    current_column++;
 
     if (highlighted && left_button_down && !handled_press_left) {
         if (*current_header == header) return true;
@@ -2728,6 +2807,9 @@ int Panel::push_selector(char *text, Color_Palette palette) {
     render_rectangle(minus_rect, button_color, thickness);
     render_rectangle(plus_rect,  button_color, thickness);
     render_text(text, strlen(text), font_size, text_rect, text_color);
+    
+    at_x += column_width;
+    current_column++;
 
     if (left_button_down && !handled_press_left) {
         if (v2_inside_rect(mouse_position, minus_rect)) return -1;
@@ -2738,9 +2820,19 @@ int Panel::push_selector(char *text, Color_Palette palette) {
 }
 
 int Panel::push_button(char *text, Color_Palette palette, int thickness) {
-    int text_length  = strlen(text);
 
-    RECT button_rect = get_current_rect();
+    int text_length = strlen(text);
+    int width = column_width;
+    if (adaptive_row) {
+         if (current_column == columns_this_row) {
+             width = left_x + base_width - at_x;
+             if (width < 0) width = 0;
+         } else {
+             width = get_width(text_length + 2, font_size);
+         }
+    }
+
+    RECT button_rect = get_rect(at_x, at_y, width, row_height);
     button_rect.left   += thickness;
     button_rect.right  -= thickness;
     button_rect.top    += thickness;
@@ -2756,6 +2848,7 @@ int Panel::push_button(char *text, Color_Palette palette, int thickness) {
     render_text(text, text_length, font_size, button_rect, text_color);
 
     at_x += column_width;
+    current_column++;
 
     if (left_button_down  && !handled_press_left  && highlighted) return Button_Left_Clicked;
     if (right_button_down && !handled_press_right && highlighted) return Button_Right_Clicked;
@@ -2825,6 +2918,7 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     render_text(*value, Small_Font, pos_rect, value_color);
 
     at_x += column_width;
+    current_column++;
 
     return initial_value != *value;
 }
@@ -2912,7 +3006,7 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
     }
 
     at_x += column_width;
-
+    current_column++;
 
     return (initial_high_value != *high_value || initial_low_value != *low_value);
 }

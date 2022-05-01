@@ -217,6 +217,7 @@ const Color GREEN      = { 70, 200,  80, 255};
 const Color DARK_GREEN = { 50, 125,  60, 255};
 const Color BLUE       = { 70, 200, 255, 255};
 const Color DARK_BLUE  = { 20, 120, 170, 255};
+const Color RED        = {255,   0,   0, 255};
 const Color ERROR_RED  = {201,  36,  24, 255};
 const Color WARNING    = {247, 194,  32, 255};
 
@@ -1635,7 +1636,7 @@ struct Panel {
     bool push_toggler(char *name, Color_Palette palette, bool *toggled, Color *override_color = NULL);
     int  push_updown_counter(char *name, Color_Palette palette, void *value, bool is_float = false);
     bool push_slider(char *text, Color_Palette palette, int *value, int min_v, int max_v, int slider_order);
-    bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order);
+    bool push_double_slider(char *text, Color_Palette palette, int *bottom_value, int *top_value, int min_v, int max_v, int slider_order, int extra_value);
     int  push_button(char *text, Color_Palette palette, int thickness = 2);
     bool push_header(char *text, Color_Palette palette, int header, int *current_header);
     int  push_selector(char *text, Color_Palette palette);
@@ -2382,12 +2383,13 @@ int main(void) {
 
             int elements = textures[settings.texture_selected].elements;
             int max_range = (settings.allow_oversizing ? elements * 2: elements) - 1;
+            int extra_value = settings.allow_oversizing ? elements - 1 : -1;
             settings.range_low  = clamp(settings.range_low,  0, max_range);
             settings.range_high = clamp(settings.range_high, 0, max_range);
             
             settings_panel.row(1, 0.25);
             settings_panel.row();
-            settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider());
+            settings_panel.push_double_slider("Range", slider_palette, &settings.range_low, &settings.range_high, 0, max_range, new_slider(), extra_value);
             settings_panel.row(1, 0.25);
 
             settings_panel.row();
@@ -2400,6 +2402,12 @@ int main(void) {
             settings.size_style += size_press;
             if (settings.size_style == -1)                  settings.size_style = Size_Settings_Count - 1;
             if (settings.size_style == Size_Settings_Count) settings.size_style = 0;
+        }
+        
+        settings_panel.row(1, 0.25);
+        settings_panel.row(1, 2);
+        if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
+            load_settings();
         }
 
         settings_panel.row(1, 0.5);
@@ -2491,11 +2499,6 @@ int main(void) {
             }
         }
 
-        settings_panel.row(1, 0.25);
-        settings_panel.row(1, 2);
-        if (settings_panel.push_button("Load Settings", default_palette) == Button_Left_Clicked) {
-            load_settings();
-        }
         
         settings_panel.row(1, 0.25);
         settings_panel.row(3);
@@ -2808,7 +2811,7 @@ bool Panel::push_slider(char *text, Color_Palette palette, int *value, int min_v
     return initial_value != *value;
 }
 
-bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value, int *high_value, int min_v, int max_v, int slider_order) {
+bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value, int *high_value, int min_v, int max_v, int slider_order, int extra_value) {
     int initial_high_value = *high_value;
     int initial_low_value  = *low_value;
 
@@ -2818,44 +2821,49 @@ bool Panel::push_double_slider(char *text, Color_Palette palette, int *low_value
 
     RECT slider_rect = get_rect(at_x,                at_y, slider_width, row_height);
     RECT text_rect   = get_rect(at_x + slider_width, at_y, text_width,   row_height);
+
+    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !(left_button_down && handled_press_left);
     
     int thickness = 2;
     int slider_height    = get_h(slider_rect) - thickness * 2;
     int slider_thickness = slider_height * 0.3;
     RECT line_rect = get_rect(slider_rect.left, (slider_rect.top + slider_rect.bottom - thickness) / 2, get_w(slider_rect), thickness);
+    render_filled_rectangle(line_rect, palette.button_color);
 
     float high_pos = (float) (*high_value - min_v) / (float) (max_v - min_v);
     float low_pos  = (float) (*low_value  - min_v) / (float) (max_v - min_v);
     int high_slider_position = slider_rect.left + (get_w(slider_rect) - slider_thickness) * high_pos;
     int low_slider_position  = slider_rect.left + (get_w(slider_rect) - slider_thickness) * low_pos;
 
+    if (extra_value > min_v) {
+        float extra_pos = (float) (extra_value - min_v) / (float) (max_v - min_v);
+        int extra_slider_position = slider_rect.left + (get_w(slider_rect) - slider_thickness) * extra_pos;
+        RECT extra_pos_rect = get_rect(extra_slider_position, slider_rect.top + thickness, slider_thickness, slider_height);
+        render_filled_rectangle(extra_pos_rect, palette.text_color);
+    }
+
     RECT high_pos_rect = get_rect(high_slider_position, slider_rect.top + thickness, slider_thickness, slider_height);
     RECT low_pos_rect  = get_rect(low_slider_position,  slider_rect.top + thickness, slider_thickness, slider_height);
-    
-    bool highlighted = v2_inside_rect(mouse_position, get_current_rect()) && !(left_button_down && handled_press_left);
-    
-    float value_0_to_1 = clamp((float) (mouse_position.x - slider_rect.left) / get_w(slider_rect), 0, 1);
-    int value = min_v + value_0_to_1 * (max_v - min_v);
-    bool high_is_closer = abs(value - *low_value) > abs(value - *high_value);
 
     Color high_slider_color = palette.button_color;
     Color low_slider_color  = palette.button_color;
-
     if (slider_is_pressed(slider_order,  true)) high_slider_color = palette.highlight_button_color;
     if (slider_is_pressed(slider_order, false)) low_slider_color  = palette.highlight_button_color;
+
+    float value_0_to_1 = clamp((float) (mouse_position.x - slider_rect.left) / get_w(slider_rect), 0, 1);
+    int value = min_v + value_0_to_1 * (max_v - min_v);
+    bool high_is_closer = abs(value - *low_value) > abs(value - *high_value);
 
     if (!sliders.pressing_a_slider && highlighted) {
         if (high_is_closer) high_slider_color = palette.highlight_button_color;
         else                low_slider_color  = palette.highlight_button_color;
     }
-
-    Color text_color = highlighted || slider_is_pressed(slider_order) ? palette.highlight_text_color : palette.text_color;
-
-    render_filled_rectangle(line_rect, palette.button_color);
     render_filled_rectangle(high_pos_rect, high_slider_color);
     render_filled_rectangle(low_pos_rect,  low_slider_color);
-    render_text(text, text_length, font_size, text_rect, text_color);
     
+    Color text_color = highlighted || slider_is_pressed(slider_order) ? palette.highlight_text_color : palette.text_color;
+    render_text(text, text_length, font_size, text_rect, text_color);
+
     if (!left_button_down) {
         sliders.pressing_a_slider = false;
     } else if (sliders.pressing_a_slider) {

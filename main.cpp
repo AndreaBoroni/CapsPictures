@@ -913,6 +913,7 @@ void sort_textures_by_birghtness(v2 *centers, Color *colors, float *brightness, 
 int *compute_indexes(bitmap image, v2 *centers, int number_of_centers, int radius) {
 
     int *indexes = (int *) malloc(sizeof(int) * number_of_centers);
+    assert(indexes);
 
     int min_index = Total_Caps - 1;
     int max_index = 0;
@@ -1049,8 +1050,10 @@ void crop_image(bitmap *image, RECT_f displayed_crop_rectangle) {
     int new_width  = crop_rectangle.right - crop_rectangle.left;
     int new_height = crop_rectangle.bottom - crop_rectangle.top;
 
-    uint32 *new_memory = (uint32 *) malloc(new_width * new_height * Bytes_Per_Pixel);
     uint32 *old_memory = (uint32 *) image->Memory;
+    uint32 *new_memory = (uint32 *) malloc(new_width * new_height * Bytes_Per_Pixel);
+    if (new_memory == NULL) return;
+    
     for (int i = 0; i < new_width; i++) {
         for (int j = 0; j < new_height; j++) {
             new_memory[i + j * new_width] = old_memory[(i + crop_rectangle.left) + (j + crop_rectangle.top) * image->Width];
@@ -1264,12 +1267,14 @@ v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
         (*radius)            = settings.random_radius;
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        assert(centers);
         compute_centers_randomly(centers, (*number_of_centers), image.Width, image.Height);
     } else if (settings.centers_style == Grid) {
         (*number_of_centers) = settings.x_grid * settings.y_grid;
         (*radius)            = settings.width / 2.0;
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        assert(centers);
         compute_centers_grid(centers, settings.x_grid, settings.y_grid, settings.width);
     } else {
         assert(settings.centers_style == Hexagonal);
@@ -1277,6 +1282,7 @@ v2 *get_centers(bitmap image, int *number_of_centers, int *radius) {
         (*radius)            = settings.radius;
 
         centers = (v2 *) malloc(sizeof(v2) * (*number_of_centers));
+        assert(centers);
         compute_centers_hex(centers, settings.x_hex, settings.y_hex, settings.radius);
         if (settings.shuffle_centers && settings.centers_style != Random) shuffle(centers, *number_of_centers, 100);
     }
@@ -1377,6 +1383,8 @@ bitmap create_image_caps_with_caps_limit(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    if (result_bitmap.Memory   == NULL) return result_bitmap;
+    if (result_bitmap.Original == NULL) return result_bitmap;
 
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
@@ -1426,6 +1434,8 @@ bitmap create_image_caps(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
+    if (result_bitmap.Memory   == NULL) return result_bitmap;
+    if (result_bitmap.Original == NULL) return result_bitmap;
 
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
@@ -1465,6 +1475,7 @@ bitmap create_image_texture(bitmap image) {
     Color *colors = compute_centers_colors(image, centers, number_of_centers, radius);
 
     float *brightnesses = (float *) malloc(sizeof(float) * number_of_centers);
+    assert(brightnesses);
     float min_brightness = 255.0;
     float max_brightness = 0.0;
     for (int i = 0; i < number_of_centers; i++) {
@@ -1493,7 +1504,9 @@ bitmap create_image_texture(bitmap image) {
     result_bitmap.Height = image.Height * settings.scale;
     result_bitmap.Memory   = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
     result_bitmap.Original = (uint8 *) malloc(result_bitmap.Width * result_bitmap.Height * Bytes_Per_Pixel);
-
+    if (result_bitmap.Memory   == NULL) return result_bitmap;
+    if (result_bitmap.Original == NULL) return result_bitmap;
+    
     if (!settings.use_original_as_background) {
         for (uint32 i = 0; i < result_bitmap.Width * result_bitmap.Height; i++) {
             result_bitmap.Memory[i*4 + 0] = settings.bg_color.B;
@@ -1821,6 +1834,10 @@ char *load_file_memory(char *file_name, unsigned int *size) {
     *size = GetFileSize(file_handle, &high_file_size);
 
     buffer = (char *) malloc(*size);
+    if (buffer == NULL) {
+        printf("ERROR while allocating %d bytes ofmemory for loadign file: %s\n", *size, file_name);
+        return 0;
+    }
     bool result = ReadFile(file_handle, buffer, *size, &number_of_bytes_read, NULL);
     CloseHandle(file_handle);
 
@@ -2165,6 +2182,7 @@ int main(void) {
 
                 if (image.Original) free(image.Original);
                 image.Original = (uint8 *) malloc(image.Width * image.Height * Bytes_Per_Pixel);
+                assert(image.Original);
                 memcpy(image.Original, image.Memory, image.Width * image.Height * Bytes_Per_Pixel);
 
                 memcpy(file_name, temp_file_name, file_name_size);
